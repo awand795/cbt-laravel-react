@@ -12,7 +12,7 @@ Aplikasi ujian berbasis komputer modern dengan sistem keamanan tingkat tinggi (*
 - **Soal dan Jawaban Dinamis:** Soal dan urutan opsi Pilihan Ganda (PG) diacak untuk setiap peserta.
 
 ## 🛠️ Teknologi (Tech Stack)
-* **Backend:** Laravel 11, PHP 8, PostgreSQL, Laravel Sanctum (Token Auth)
+* **Backend:** Laravel 13, PHP 8.3, PostgreSQL, Laravel Sanctum (Token Auth)
 * **Frontend:** React JS, Vite, Zustand (State Management), TanStack React Query (Data Fetching), Tailwind CSS v4 (Styling)
 
 ## 📂 Struktur Repositori
@@ -23,7 +23,7 @@ Aplikasi ujian berbasis komputer modern dengan sistem keamanan tingkat tinggi (*
 
 ## ⚙️ Persyaratan Sistem (Prerequisites)
 Pastikan komputer Anda sudah memiliki perangkat lunak berikut:
-- **PHP** (Minimal v8.2) & **Composer**
+- **PHP** (Minimal v8.3) & **Composer**
 - **Node.js** & **NPM**
 - **PostgreSQL**
 
