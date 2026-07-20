@@ -1,0 +1,64 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: cbt_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: cbt_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - cbt_network
+
+  backend:
+    build:
+      context: ./cbt-backend
+      dockerfile: Dockerfile
+    container_name: cbt_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - DB_CONNECTION=pgsql
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_DATABASE=cbt_db
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=password
+    depends_on:
+      - db
+    networks:
+      - cbt_network
+    volumes:
+      - ./cbt-backend:/var/www
+      - /var/www/vendor
+
+  frontend:
+    build:
+      context: ./cbt-frontend
+      dockerfile: Dockerfile
+    container_name: cbt_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000/api
+    depends_on:
+      - backend
+    networks:
+      - cbt_network
+    volumes:
+      - ./cbt-frontend:/app
+      - /app/node_modules
+
+networks:
+  cbt_network:
+    driver: bridge
+
+volumes:
+  pgdata:
