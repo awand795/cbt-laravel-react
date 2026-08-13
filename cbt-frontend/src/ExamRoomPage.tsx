@@ -95,6 +95,11 @@ export default function ExamRoomPage() {
   const answerSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef(false);
   const blockedRef = useRef(false);
+  // Ref cermin dari `selected`/`essays` — disinkronkan SINKRON di handler.
+  // Dipakai oleh auto-save agar timer debounce tidak membaca state basi
+  // (closure `setTimeout` selalu menangkap render sebelum perubahan).
+  const selectedRef = useRef<Record<number, number | null>>({});
+  const essaysRef = useRef<Record<number, string>>({});
 
   /* ===== Fetch session ===== */
   const { data: session, isLoading, isError, error } = useQuery({
@@ -130,6 +135,8 @@ export default function ExamRoomPage() {
       setFlagged(new Set(flags));
     }
 
+    selectedRef.current = opt;
+    essaysRef.current = ess;
     setSelected(opt);
     setEssays(ess);
     setRemaining(session.remaining_seconds);
@@ -158,17 +165,20 @@ export default function ExamRoomPage() {
 
   const collectPendingAnswers = useCallback(() => {
     if (!session) return [];
+    // Baca dari ref agar selalu mendapat nilai TERBARU, bukan closure basi.
+    const sel = selectedRef.current;
+    const ess = essaysRef.current;
     return session.questions
       .filter((qq) => {
-        const opt = selected[qq.id];
-        const ess = essays[qq.id];
-        return (qq.type === 'pg' && opt != null) || (qq.type === 'essay' && ess && ess.trim() !== '');
+        const opt = sel[qq.id];
+        const text = ess[qq.id];
+        return (qq.type === 'pg' && opt != null) || (qq.type === 'essay' && text && text.trim() !== '');
       })
       .map((qq) => ({
         question_id: qq.id,
-        ...(qq.type === 'pg' ? { option_id: selected[qq.id] } : { essay_text: essays[qq.id] }),
+        ...(qq.type === 'pg' ? { option_id: sel[qq.id] } : { essay_text: ess[qq.id] }),
       }));
-  }, [selected, essays, session]);
+  }, [session]);
 
   // Flush semua jawaban lokal dulu, baru submit — agar tidak ada jawaban yang tertinggal
   const handleSubmit = useCallback(async () => {
@@ -315,13 +325,15 @@ export default function ExamRoomPage() {
 
   const handleSelectOption = (questionId: number, optionId: number) => {
     if (blocked || blockedRef.current || result) return;
-    setSelected((prev) => ({ ...prev, [questionId]: optionId }));
+    selectedRef.current = { ...selectedRef.current, [questionId]: optionId };
+    setSelected(selectedRef.current);
     scheduleSave();
   };
 
   const handleEssayChange = (questionId: number, value: string) => {
     if (blocked || blockedRef.current || result) return;
-    setEssays((prev) => ({ ...prev, [questionId]: value }));
+    essaysRef.current = { ...essaysRef.current, [questionId]: value };
+    setEssays(essaysRef.current);
     scheduleSave();
   };
 

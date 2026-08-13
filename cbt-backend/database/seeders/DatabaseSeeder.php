@@ -35,12 +35,15 @@ class DatabaseSeeder extends Seeder
         ]);
 
         // Subject
-        $subject = Subject::create(['name' => 'Matematika Dasar']);
+        $subject = Subject::create(['name' => 'Matematika Dasar', 'code' => 'MTK']);
 
-        // Exam
+        // Exam — dimiliki oleh akun Guru agar bisa dikelola lewat panel guru
+        $teacher = User::where('email', 'guru@cbt.com')->first();
         $exam = Exam::create([
             'subject_id' => $subject->id,
+            'created_by' => $teacher?->id,
             'title' => 'Ujian Akhir Semester Matematika',
+            'description' => 'Ujian Akhir Semester ganjil — kerjakan dengan jujur.',
             'duration_minutes' => 60,
             'status' => 'published',
             'start_time' => now()->subDay(),
