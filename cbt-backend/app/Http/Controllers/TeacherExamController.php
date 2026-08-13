@@ -176,6 +176,7 @@ class TeacherExamController extends Controller
                 'type' => ['required', Rule::in(['pg', 'essay'])],
                 'question_text' => ['required', 'string'],
                 'media_url' => ['nullable', 'string', 'max:255'],
+                'score' => ['nullable', 'integer', 'min:1', 'max:1000'],
                 'options' => ['nullable', 'array', 'min:2', 'max:10'],
                 'options.*.option_text' => ['required_with:options', 'string', 'max:255'],
                 'options.*.is_correct' => ['nullable', 'boolean'],
@@ -201,6 +202,7 @@ class TeacherExamController extends Controller
             'type' => $validated['type'],
             'question_text' => $validated['question_text'],
             'media_url' => $validated['media_url'] ?? null,
+            'score' => $validated['score'] ?? 1,
         ]);
 
         foreach ($validated['options'] ?? [] as $opt) {
@@ -239,6 +241,7 @@ class TeacherExamController extends Controller
                 'type' => ['required', Rule::in(['pg', 'essay'])],
                 'question_text' => ['required', 'string'],
                 'media_url' => ['nullable', 'string', 'max:255'],
+                'score' => ['nullable', 'integer', 'min:1', 'max:1000'],
                 'options' => ['nullable', 'array', 'min:2', 'max:10'],
                 'options.*.option_text' => ['required_with:options', 'string', 'max:255'],
                 'options.*.is_correct' => ['nullable', 'boolean'],
@@ -259,6 +262,7 @@ class TeacherExamController extends Controller
             'type' => $validated['type'],
             'question_text' => $validated['question_text'],
             'media_url' => $validated['media_url'] ?? null,
+            'score' => $validated['score'] ?? $question->score ?? 1,
         ]);
 
         // Ganti seluruh opsi lama dengan opsi baru (cara paling sederhana & aman)
@@ -325,17 +329,43 @@ class TeacherExamController extends Controller
             ->orderByDesc('id')
             ->get();
 
-        // Hitung skor ulang dari jawaban tersimpan (aman & konsisten)
-        $pgTotal = $exam->questions()->where('type', 'pg')->count();
+        // Hitung skor ulang dari jawaban tersimpan, berbasis BOBOT nilai per soal.
+        $questions = $exam->questions()->get(['id', 'type', 'score']);
+        $pgQuestions = $questions->where('type', 'pg');
+        $essayQuestions = $questions->where('type', 'essay');
+        $pgTotalWeight = (int) $pgQuestions->sum('score');
+        $essayTotalWeight = (int) $essayQuestions->sum('score');
+        $weightById = $questions->pluck('score', 'id');
 
-        $data = $sessions->map(function (ExamSession $s) use ($pgTotal) {
+        $data = $sessions->map(function (ExamSession $s) use ($weightById, $pgTotalWeight, $essayTotalWeight) {
             $answers = $s->answers()->get();
-            $pgCorrect = $answers->whereNotNull('is_correct')->where('is_correct', true)
+
+            // Bobot PG yang dijawab benar (diisi otomatis saat siswa menjawab)
+            $pgCorrectWeight = (int) $answers
+                ->where('is_correct', true)
                 ->whereIn('question_id', $this->pgQuestionIds($s))
-                ->count();
-            $essayAnswered = $answers->whereNotNull('essay_text')->count();
-            $essayGraded = $answers->whereNotNull('essay_text')->whereNotNull('is_correct')->count();
-            $score = $pgTotal > 0 ? round(($pgCorrect / $pgTotal) * 100, 2) : null;
+                ->sum(fn ($a) => (int) ($weightById[$a->question_id] ?? 1));
+            $pgCorrect = $answers->where('is_correct', true)->whereIn('question_id', $this->pgQuestionIds($s))->count();
+            $pgTotal = $this->pgQuestionIds($s) ? count($this->pgQuestionIds($s)) : 0;
+
+            // Bobot essay yang sudah dinilai guru (benar vs total dinilai)
+            $essayAnswers = $answers->whereNotNull('essay_text');
+            $essayAnswered = $essayAnswers->count();
+            $essayGraded = $essayAnswers->whereNotNull('is_correct')->count();
+            $essayGradedCorrectWeight = (int) $essayAnswers->where('is_correct', true)->sum(fn ($a) => (int) ($weightById[$a->question_id] ?? 1));
+            $essayGradedTotalWeight = (int) $essayAnswers->whereNotNull('is_correct')->sum(fn ($a) => (int) ($weightById[$a->question_id] ?? 1));
+
+            // Skor otomatis: hanya PG berbobot
+            $score = $pgTotalWeight > 0 ? round(($pgCorrectWeight / $pgTotalWeight) * 100, 2) : null;
+
+            // Skor akhir: PG + essay yang sudah dinilai. Jika ujian punya essay
+            // tapi belum ada yang dinilai, nilai akhir masih kosong (belum lengkap).
+            $finalScore = null;
+            if ($essayTotalWeight > 0 && $essayGraded === 0) {
+                $finalScore = null;
+            } elseif ($pgTotalWeight + $essayGradedTotalWeight > 0) {
+                $finalScore = round((($pgCorrectWeight + $essayGradedCorrectWeight) / ($pgTotalWeight + $essayGradedTotalWeight)) * 100, 2);
+            }
 
             return [
                 'session_id' => $s->id,
@@ -347,8 +377,11 @@ class TeacherExamController extends Controller
                 'started_at' => $s->started_at?->toIso8601String(),
                 'finished_at' => $s->finished_at?->toIso8601String(),
                 'score' => $score,
+                'final_score' => $finalScore,
                 'pg_correct' => $pgCorrect,
                 'pg_total' => $pgTotal,
+                'pg_correct_weight' => $pgCorrectWeight,
+                'pg_total_weight' => $pgTotalWeight,
                 'essay_answered' => $essayAnswered,
                 'essay_graded' => $essayGraded,
             ];
@@ -388,6 +421,7 @@ class TeacherExamController extends Controller
                     'question_id' => $q->id,
                     'type' => $q->type,
                     'question_text' => $q->question_text,
+                    'score' => $q->score,
                     'options' => $q->options->map(fn (Option $o) => [
                         'id' => $o->id,
                         'option_text' => $o->option_text,
@@ -522,6 +556,7 @@ class TeacherExamController extends Controller
             'type' => $question->type,
             'question_text' => $question->question_text,
             'media_url' => $question->media_url,
+            'score' => $question->score,
             'options' => $question->options->map(fn (Option $o) => [
                 'id' => $o->id,
                 'option_text' => $o->option_text,

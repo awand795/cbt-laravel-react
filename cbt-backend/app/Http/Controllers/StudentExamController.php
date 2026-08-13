@@ -431,18 +431,21 @@ class StudentExamController extends Controller
             return $expired;
         }
 
-        // Hitung nilai PG
+        // Hitung nilai PG berbasis BOBOT per soal: bobot benar ÷ total bobot × 100
         $pgQuestions = $exam->questions->where('type', 'pg');
-        $pgTotal = $pgQuestions->count();
+        $pgTotalWeight = (int) $pgQuestions->sum('score');
+        $weightById = $pgQuestions->pluck('score', 'id');
         $pgCorrect = 0;
+        $pgCorrectWeight = 0;
 
         foreach ($session->answers as $answer) {
             if ($answer->option_id && $answer->is_correct) {
                 $pgCorrect++;
+                $pgCorrectWeight += (int) ($weightById[$answer->question_id] ?? 1);
             }
         }
 
-        $score = $pgTotal > 0 ? round(($pgCorrect / $pgTotal) * 100, 2) : null;
+        $score = $pgTotalWeight > 0 ? round(($pgCorrectWeight / $pgTotalWeight) * 100, 2) : null;
 
         $this->finish($session);
 
@@ -454,7 +457,9 @@ class StudentExamController extends Controller
                 'finished_at' => $session->finished_at?->toIso8601String(),
                 'score' => $score,
                 'pg_correct' => $pgCorrect,
-                'pg_total' => $pgTotal,
+                'pg_total' => $pgQuestions->count(),
+                'pg_correct_weight' => $pgCorrectWeight,
+                'pg_total_weight' => $pgTotalWeight,
             ],
         ]);
     }

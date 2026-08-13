@@ -13,6 +13,7 @@ class Question extends Model
         'type',
         'question_text',
         'media_url',
+        'score',
     ];
 
     public function exam(): BelongsTo

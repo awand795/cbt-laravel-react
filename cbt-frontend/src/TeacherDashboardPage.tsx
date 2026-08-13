@@ -530,6 +530,7 @@ interface QuestionForm {
   type: 'pg' | 'essay';
   question_text: string;
   media_url: string;
+  score: string;
   options: { option_text: string; is_correct: boolean }[];
 }
 
@@ -543,6 +544,7 @@ function QuestionsTab() {
     type: 'pg',
     question_text: '',
     media_url: '',
+    score: '1',
     options: [
       { option_text: '', is_correct: false },
       { option_text: '', is_correct: false },
@@ -566,6 +568,7 @@ function QuestionsTab() {
         type: form.type,
         question_text: form.question_text,
         media_url: form.media_url || null,
+        score: Math.max(1, Number(form.score) || 1),
         options: form.type === 'pg' ? form.options.filter((o) => o.option_text.trim() !== '') : undefined,
       };
       return editing
@@ -603,6 +606,7 @@ function QuestionsTab() {
       type: 'pg',
       question_text: '',
       media_url: '',
+      score: '1',
       options: [
         { option_text: '', is_correct: false },
         { option_text: '', is_correct: false },
@@ -621,6 +625,7 @@ function QuestionsTab() {
       type: q.type,
       question_text: q.question_text,
       media_url: q.media_url ?? '',
+      score: String(q.score ?? 1),
       options: q.type === 'pg'
         ? q.options.map((o) => ({ option_text: o.option_text, is_correct: o.is_correct }))
         : [{ option_text: '', is_correct: false }],
@@ -696,6 +701,9 @@ function QuestionsTab() {
                         {q.type === 'pg' ? 'Pilihan Ganda' : 'Essay'}
                       </Badge>
                       <span className="text-xs font-semibold text-slate-400">{q.options.length} opsi</span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 font-mono text-[11px] font-bold text-indigo-600 ring-1 ring-indigo-100">
+                        {q.score ?? 1} poin
+                      </span>
                     </div>
                     <p className="mt-2 text-sm font-bold leading-relaxed text-slate-800">{q.question_text}</p>
                     {q.type === 'pg' && (
@@ -787,6 +795,21 @@ function QuestionsTab() {
                 onChange={(e) => setForm({ ...form, question_text: e.target.value })}
                 required
                 placeholder="Tulis soal di sini…"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+                Bobot Nilai <span className="font-normal text-slate-400">(poin — skor akhir dihitung dari bobot)</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={1000}
+                className={`${inputCls} max-w-[160px]`}
+                value={form.score}
+                onChange={(e) => setForm({ ...form, score: e.target.value })}
+                required
               />
             </div>
 
@@ -967,15 +990,17 @@ function ResultsTab() {
                       <p className="text-xs font-medium text-slate-400">{r.user_email}</p>
                     </td>
                     <td className="px-5 py-3.5">
-                      {r.score != null ? (
-                        <span className={`font-mono text-base font-bold tabular-nums ${r.score >= 75 ? 'text-emerald-600' : r.score >= 60 ? 'text-amber-600' : 'text-rose-600'}`}>
-                          {r.score}
-                          <span className="text-xs text-slate-400">/100</span>
+                      <span className={`inline-flex items-baseline gap-1 font-mono text-base font-bold tabular-nums ${r.score != null && r.score >= 75 ? 'text-emerald-600' : r.score != null && r.score >= 60 ? 'text-amber-600' : 'text-rose-600'}`}>
+                        {r.score != null ? <>{r.score}<span className="text-xs text-slate-400">/100</span></> : <span className="text-slate-300">—</span>}
+                      </span>
+                      <p className="text-[11px] font-medium text-slate-400">
+                        {r.pg_correct_weight} poin benar dari {r.pg_total_weight} poin PG
+                      </p>
+                      {r.final_score != null && (
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-0.5 font-mono text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-200">
+                          Nilai akhir: {r.final_score}/100
                         </span>
-                      ) : (
-                        <span className="text-slate-300">—</span>
                       )}
-                      <p className="text-[11px] font-medium text-slate-400">{r.pg_correct}/{r.pg_total} benar</p>
                     </td>
                     <td className="px-5 py-3.5">
                       {r.essay_answered > 0 ? (
@@ -1073,6 +1098,9 @@ function EssayQuestion({
             <Badge cls={q.type === 'pg' ? 'bg-sky-50 text-sky-700 ring-sky-200' : 'bg-violet-50 text-violet-700 ring-violet-200'}>
               {q.type === 'pg' ? 'Pilihan Ganda' : 'Essay'}
             </Badge>
+            <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 font-mono text-[11px] font-bold text-indigo-600 ring-1 ring-indigo-100">
+              {q.score ?? 1} poin
+            </span>
             <p className="mt-2 text-sm font-bold leading-relaxed text-slate-800">{q.question_text}</p>
           </div>
         </div>

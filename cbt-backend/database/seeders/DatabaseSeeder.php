@@ -65,22 +65,24 @@ class DatabaseSeeder extends Seeder
         ]);
         $exam->classrooms()->attach($classA->id);
 
-        // Question 1
+        // Question 1 — bobot 4 poin (skor akhir dihitung dari bobot)
         $q1 = Question::create([
             'exam_id' => $exam->id,
             'type' => 'pg',
             'question_text' => 'Berapakah 5 x 5?',
+            'score' => 4,
         ]);
         Option::create(['question_id' => $q1->id, 'option_text' => '10', 'is_correct' => false]);
         Option::create(['question_id' => $q1->id, 'option_text' => '20', 'is_correct' => false]);
         Option::create(['question_id' => $q1->id, 'option_text' => '25', 'is_correct' => true]);
         Option::create(['question_id' => $q1->id, 'option_text' => '30', 'is_correct' => false]);
 
-        // Question 2
+        // Question 2 — bobot 6 poin
         $q2 = Question::create([
             'exam_id' => $exam->id,
             'type' => 'pg',
             'question_text' => 'Siapa penemu Teori Relativitas?',
+            'score' => 6,
         ]);
         Option::create(['question_id' => $q2->id, 'option_text' => 'Isaac Newton', 'is_correct' => false]);
         Option::create(['question_id' => $q2->id, 'option_text' => 'Albert Einstein', 'is_correct' => true]);

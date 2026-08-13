@@ -137,6 +137,8 @@ export interface SubmitExamData {
   score: number | null;
   pg_correct: number;
   pg_total: number;
+  pg_correct_weight?: number;
+  pg_total_weight?: number;
 }
 
 export async function fetchExamSession(sessionId: number): Promise<ExamSessionDetail> {
@@ -410,6 +412,7 @@ export interface TeacherQuestion {
   type: 'pg' | 'essay';
   question_text: string;
   media_url: string | null;
+  score: number;
   options: { id: number; option_text: string; is_correct: boolean }[];
 }
 
@@ -427,6 +430,7 @@ export interface QuestionPayload {
   type: 'pg' | 'essay';
   question_text: string;
   media_url?: string | null;
+  score?: number;
   options?: { option_text: string; is_correct: boolean }[];
 }
 
@@ -461,8 +465,11 @@ export interface ResultRecord {
   started_at: string | null;
   finished_at: string | null;
   score: number | null;
+  final_score: number | null;
   pg_correct: number;
   pg_total: number;
+  pg_correct_weight: number;
+  pg_total_weight: number;
   essay_answered: number;
   essay_graded: number;
 }
@@ -481,6 +488,7 @@ export interface GradedAnswer {
   question_id: number;
   type: 'pg' | 'essay';
   question_text: string;
+  score: number;
   options: { id: number; option_text: string; is_correct: boolean }[];
   answer_option_id: number | null;
   answer_essay_text: string | null;
