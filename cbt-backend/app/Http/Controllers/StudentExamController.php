@@ -23,13 +23,19 @@ class StudentExamController extends Controller
 
         $exams = Exam::query()
             ->withCount('questions')
-            ->with('subject')
+            ->with(['subject', 'classrooms:id,name'])
             ->where('status', 'published')
             ->where(function ($q) {
                 $q->whereNull('start_time')->orWhere('start_time', '<=', now());
             })
             ->where(function ($q) {
                 $q->whereNull('end_time')->orWhere('end_time', '>=', now());
+            })
+            ->where(function ($q) use ($user) {
+                // Ujian tanpa penetapan kelas → untuk semua siswa.
+                // Ujian dengan penetapan kelas → hanya kelas siswa tersebut.
+                $q->whereDoesntHave('classrooms')
+                    ->orWhereHas('classrooms', fn ($c) => $c->whereKey($user->class_id));
             })
             ->orderBy('start_time')
             ->get();
@@ -88,6 +94,15 @@ class StudentExamController extends Controller
                 'message' => 'Ujian tidak ditemukan atau belum dipublikasikan.',
                 'data' => null,
             ], 404);
+        }
+
+        // Ujian dikhususkan untuk kelas tertentu — cek keanggotaan siswa
+        if (! $exam->isVisibleToStudent($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ujian tidak tersedia untuk kelas Anda.',
+                'data' => null,
+            ], 403);
         }
 
         // Belum waktunya ujian

@@ -6,7 +6,6 @@ import {
   FaSignOutAlt,
   FaUserGraduate,
   FaChalkboardTeacher,
-  FaBookOpen,
   FaCalendarAlt,
   FaUsers,
   FaLayerGroup,
@@ -28,35 +27,41 @@ import {
   FaPause,
 } from 'react-icons/fa';
 import {
+  createClass,
   createExam,
   createSubject,
   createUser,
+  deleteClass,
   deleteExam,
   deleteSubject,
   deleteUser,
   fetchAdminExams,
   fetchAdminStats,
   fetchBlockedSessions,
+  fetchClasses,
   fetchLiveMonitor,
   fetchSubjects,
   fetchUsers,
   unblockSession,
+  updateClass,
   updateExam,
   updateExamStatus,
   updateSubject,
   updateUser,
   type AdminExam,
+  type ClassroomRecord,
   type SubjectRecord,
   type UserRecord,
 } from './api/client';
 import { useAuthStore } from './store/authStore';
 
-type Tab = 'overview' | 'users' | 'subjects' | 'exams' | 'live' | 'blocked';
+type Tab = 'overview' | 'users' | 'subjects' | 'classes' | 'exams' | 'live' | 'blocked';
 
 const TABS: { id: Tab; label: string; icon: typeof FaTv }[] = [
   { id: 'overview', label: 'Ringkasan', icon: FaTv },
   { id: 'users', label: 'Pengguna', icon: FaUsers },
   { id: 'subjects', label: 'Mata Pelajaran', icon: FaLayerGroup },
+  { id: 'classes', label: 'Kelas', icon: FaUsers },
   { id: 'exams', label: 'Ujian', icon: FaClipboardList },
   { id: 'live', label: 'Live Monitor', icon: FaTv },
   { id: 'blocked', label: 'Terblokir', icon: FaLock },
@@ -67,6 +72,14 @@ const ROLE_BADGE: Record<string, { label: string; cls: string }> = {
   teacher: { label: 'Guru', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
   student: { label: 'Siswa', cls: 'bg-amber-50 text-amber-700 ring-amber-200' },
 };
+
+const GRADIENT_ICONS = [
+  'from-indigo-500 to-violet-600',
+  'from-emerald-500 to-teal-600',
+  'from-sky-500 to-cyan-600',
+  'from-amber-500 to-orange-600',
+  'from-rose-500 to-pink-600',
+];
 
 const EXAM_STATUS: Record<string, { label: string; cls: string; dot: string }> = {
   draft: { label: 'Draf', cls: 'bg-slate-100 text-slate-600 ring-slate-200', dot: 'bg-slate-400' },
@@ -189,9 +202,9 @@ function Overview({ goTo }: { goTo: (t: Tab) => void }) {
 
   const cards = [
     { label: 'Siswa', value: stats?.students ?? 0, icon: FaUserGraduate, grad: 'from-indigo-500 to-violet-600' },
-    { label: 'Guru', value: stats?.teachers ?? 0, icon: FaChalkboardTeacher, grad: 'from-emerald-500 to-teal-600' },
-    { label: 'Mata Pelajaran', value: stats?.subjects ?? 0, icon: FaLayerGroup, grad: 'from-sky-500 to-cyan-600' },
-    { label: 'Ujian Terbit', value: stats?.published_exams ?? 0, icon: FaBookOpen, grad: 'from-amber-500 to-orange-600' },
+    { label: 'Kelas', value: stats?.classes ?? 0, icon: FaUsers, grad: 'from-emerald-500 to-teal-600' },
+    { label: 'Guru', value: stats?.teachers ?? 0, icon: FaChalkboardTeacher, grad: 'from-sky-500 to-cyan-600' },
+    { label: 'Mata Pelajaran', value: stats?.subjects ?? 0, icon: FaLayerGroup, grad: 'from-amber-500 to-orange-600' },
   ];
 
   return (
@@ -294,7 +307,7 @@ function UsersTab() {
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [editing, setEditing] = useState<UserRecord | null>(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'student' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'student', class_id: '' });
   const [error, setError] = useState<string | null>(null);
 
   const { data: users, isLoading } = useQuery({
@@ -302,17 +315,31 @@ function UsersTab() {
     queryFn: () => fetchUsers(roleFilter === 'all' ? undefined : roleFilter),
   });
 
+  const { data: classes } = useQuery({ queryKey: ['admin-classes'], queryFn: fetchClasses });
+
   const saveMutation = useMutation({
     mutationFn: () =>
       editing
-        ? updateUser(editing.id, { name: form.name, email: form.email, role: form.role as UserRecord['role'], password: form.password || undefined })
-        : createUser({ name: form.name, email: form.email, password: form.password, role: form.role as UserRecord['role'] }),
+        ? updateUser(editing.id, {
+            name: form.name,
+            email: form.email,
+            role: form.role as UserRecord['role'],
+            password: form.password || undefined,
+            class_id: form.class_id ? Number(form.class_id) : null,
+          })
+        : createUser({
+            name: form.name,
+            email: form.email,
+            password: form.password,
+            role: form.role as UserRecord['role'],
+            class_id: form.class_id ? Number(form.class_id) : null,
+          }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       setCreating(false);
       setEditing(null);
-      setForm({ name: '', email: '', password: '', role: 'student' });
+      setForm({ name: '', email: '', password: '', role: 'student', class_id: '' });
       setError(null);
     },
     onError: (err: unknown) => {
@@ -335,7 +362,7 @@ function UsersTab() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', email: '', password: '', role: 'student' });
+    setForm({ name: '', email: '', password: '', role: 'student', class_id: '' });
     setError(null);
     setCreating(true);
   };
@@ -343,7 +370,7 @@ function UsersTab() {
   const openEdit = (u: UserRecord) => {
     setCreating(true);
     setEditing(u);
-    setForm({ name: u.name, email: u.email, password: '', role: u.role });
+    setForm({ name: u.name, email: u.email, password: '', role: u.role, class_id: u.class_id ? String(u.class_id) : '' });
     setError(null);
   };
 
@@ -388,6 +415,7 @@ function UsersTab() {
                 <th className="px-5 py-3.5">Nama</th>
                 <th className="px-5 py-3.5">Email</th>
                 <th className="px-5 py-3.5">Peran</th>
+                <th className="px-5 py-3.5">Kelas</th>
                 <th className="px-5 py-3.5">Dibuat</th>
                 <th className="px-5 py-3.5 text-right">Aksi</th>
               </tr>
@@ -395,13 +423,13 @@ function UsersTab() {
             <tbody className="divide-y divide-slate-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-10 text-center">
+                  <td colSpan={6} className="px-5 py-10 text-center">
                     <FaSpinner className="mx-auto animate-spin text-indigo-500" aria-hidden="true" />
                   </td>
                 </tr>
               ) : !users || users.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-10 text-center text-sm font-medium text-slate-400">
+                  <td colSpan={6} className="px-5 py-10 text-center text-sm font-medium text-slate-400">
                     Tidak ada pengguna dengan filter ini.
                   </td>
                 </tr>
@@ -414,6 +442,13 @@ function UsersTab() {
                       <td className="px-5 py-3.5 font-medium text-slate-500">{u.email}</td>
                       <td className="px-5 py-3.5">
                         <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${badge.cls}`}>{badge.label}</span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        {u.class_name ? (
+                          <span className="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-600">{u.class_name}</span>
+                        ) : (
+                          <span className="text-xs font-medium text-slate-300">—</span>
+                        )}
                       </td>
                       <td className="px-5 py-3.5 font-mono text-xs text-slate-400">{formatDate(u.created_at)}</td>
                       <td className="px-5 py-3.5">
@@ -495,6 +530,22 @@ function UsersTab() {
                 ))}
               </div>
             </div>
+
+            {form.role === 'student' && (
+              <div>
+                <label className="mb-1.5 block text-sm font-semibold text-slate-700">Kelas</label>
+                <select
+                  className={inputCls}
+                  value={form.class_id}
+                  onChange={(e) => setForm({ ...form, class_id: e.target.value })}
+                >
+                  <option value="">Belum ada kelas</option>
+                  {classes?.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}{c.code ? ` (${c.code})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="flex justify-end gap-3 pt-2">
               <button type="button" onClick={() => setCreating(false)} className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-50">
                 Batal
@@ -666,6 +717,169 @@ function SubjectsTab() {
   );
 }
 
+/* ============ Classes tab (Kelas) ============ */
+
+function ClassesTab() {
+  const queryClient = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<ClassroomRecord | null>(null);
+  const [form, setForm] = useState({ name: '', code: '' });
+  const [error, setError] = useState<string | null>(null);
+
+  const { data: classes, isLoading } = useQuery({ queryKey: ['admin-classes'], queryFn: fetchClasses });
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      editing
+        ? updateClass(editing.id, { name: form.name, code: form.code || undefined })
+        : createClass({ name: form.name, code: form.code || undefined }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-classes'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      setCreating(false);
+      setEditing(null);
+      setForm({ name: '', code: '' });
+      setError(null);
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
+      setError(msg || 'Gagal menyimpan kelas.');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteClass,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-classes'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
+      setError(msg || 'Gagal menghapus kelas.');
+    },
+  });
+
+  return (
+    <div className="space-y-5">
+      {error && <AlertBanner message={error} />}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          className={primaryBtnCls}
+          onClick={() => {
+            setEditing(null);
+            setForm({ name: '', code: '' });
+            setError(null);
+            setCreating(true);
+          }}
+        >
+          <FaPlus aria-hidden="true" /> Tambah Kelas
+        </button>
+      </div>
+
+      <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              <th className="px-5 py-3.5">Nama</th>
+              <th className="px-5 py-3.5">Kode</th>
+              <th className="px-5 py-3.5">Jumlah Siswa</th>
+              <th className="px-5 py-3.5 text-right">Aksi</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {isLoading ? (
+              <tr><td colSpan={4} className="px-5 py-10 text-center"><FaSpinner className="mx-auto animate-spin text-indigo-500" aria-hidden="true" /></td></tr>
+            ) : !classes || classes.length === 0 ? (
+              <tr><td colSpan={4} className="px-5 py-10 text-center text-sm font-medium text-slate-400">Belum ada kelas. Buat kelas untuk mengelompokkan siswa dan menetapkan ujian.</td></tr>
+            ) : (
+              classes.map((c, i) => (
+                <tr key={c.id} className="transition-colors hover:bg-indigo-50/40">
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center gap-3">
+                      <span className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${GRADIENT_ICONS[i % GRADIENT_ICONS.length]} text-xs font-bold text-white shadow-md`}>
+                        {c.code?.slice(0, 2) ?? c.name.slice(0, 2)}
+                      </span>
+                      <span className="font-bold text-slate-800">{c.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    {c.code ? (
+                      <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-mono text-xs font-bold text-slate-600">{c.code}</span>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
+                  <td className="px-5 py-3.5 font-mono text-xs font-bold text-slate-500">{c.students_count ?? 0} siswa</td>
+                  <td className="px-5 py-3.5">
+                    <div className="flex justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditing(c);
+                          setForm({ name: c.name, code: c.code ?? '' });
+                          setError(null);
+                          setCreating(true);
+                        }}
+                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600"
+                        aria-label={`Edit ${c.name}`}
+                      >
+                        <FaEdit className="text-xs" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`Hapus kelas "${c.name}"?`)) deleteMutation.mutate(c.id);
+                        }}
+                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition-all hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+                        aria-label={`Hapus ${c.name}`}
+                      >
+                        <FaTrash className="text-xs" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {creating && (
+        <Modal
+          title={editing ? 'Edit Kelas' : 'Tambah Kelas'}
+          subtitle="Kelas dipakai untuk mengelompokkan siswa dan menetapkan ujian tertentu."
+          onClose={() => setCreating(false)}
+        >
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              saveMutation.mutate();
+            }}
+          >
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-slate-700">Nama Kelas</label>
+              <input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="cth: Kelas IX-A" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-slate-700">Kode (opsional)</label>
+              <input className={inputCls} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="cth: IX-A" />
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => setCreating(false)} className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-50">Batal</button>
+              <button type="submit" disabled={saveMutation.isPending} className={primaryBtnCls}>
+                {saveMutation.isPending ? <FaSpinner className="animate-spin" aria-hidden="true" /> : <FaCheckCircle aria-hidden="true" />}
+                {editing ? 'Simpan Perubahan' : 'Tambah Kelas'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 /* ============ Exams tab ============ */
 
 function ExamsTab() {
@@ -681,10 +895,12 @@ function ExamsTab() {
     start_time: '',
     end_time: '',
     status: 'draft',
+    class_ids: [] as number[],
   });
 
   const { data: exams, isLoading } = useQuery({ queryKey: ['admin-exams'], queryFn: fetchAdminExams });
   const { data: subjects } = useQuery({ queryKey: ['admin-subjects'], queryFn: fetchSubjects });
+  const { data: classes } = useQuery({ queryKey: ['admin-classes'], queryFn: fetchClasses });
 
   const saveMutation = useMutation({
     mutationFn: () => {
@@ -696,6 +912,7 @@ function ExamsTab() {
         start_time: form.start_time ? new Date(form.start_time).toISOString() : null,
         end_time: form.end_time ? new Date(form.end_time).toISOString() : null,
         status: form.status as 'draft' | 'published' | 'closed',
+        class_ids: form.class_ids,
       };
       return editing ? updateExam(editing.id, payload) : createExam(payload);
     },
@@ -738,7 +955,7 @@ function ExamsTab() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ subject_id: subjects?.[0] ? String(subjects[0].id) : '', title: '', description: '', duration_minutes: '60', start_time: '', end_time: '', status: 'draft' });
+    setForm({ subject_id: subjects?.[0] ? String(subjects[0].id) : '', title: '', description: '', duration_minutes: '60', start_time: '', end_time: '', status: 'draft', class_ids: [] });
     setError(null);
     setCreating(true);
   };
@@ -754,8 +971,18 @@ function ExamsTab() {
       start_time: formatDateTimeLocal(e.start_time),
       end_time: formatDateTimeLocal(e.end_time),
       status: e.status,
+      class_ids: [...e.class_ids],
     });
     setError(null);
+  };
+
+  const toggleClass = (id: number) => {
+    setForm((prev) => ({
+      ...prev,
+      class_ids: prev.class_ids.includes(id)
+        ? prev.class_ids.filter((x) => x !== id)
+        : [...prev.class_ids, id],
+    }));
   };
 
   return (
@@ -793,6 +1020,15 @@ function ExamsTab() {
                       <td className="px-5 py-3.5">
                         <p className="font-bold text-slate-800">{e.title}</p>
                         <p className="text-xs font-medium text-slate-400">{e.questions_count} soal · {e.sessions_count} peserta</p>
+                        {e.class_names.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {e.class_names.map((cn) => (
+                              <span key={cn} className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-100">
+                                {cn}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-3.5">
                         {e.subject_code ? (
@@ -913,6 +1149,34 @@ function ExamsTab() {
                     {EXAM_STATUS[s].label}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+                Kelas Peserta <span className="font-normal text-slate-400">(kosongkan = semua kelas)</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {classes?.map((c) => {
+                  const active = form.class_ids.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => toggleClass(c.id)}
+                      className={`rounded-xl px-3.5 py-2 text-xs font-bold transition-all duration-200 ${
+                        active
+                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
+                          : 'border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-600'
+                      }`}
+                    >
+                      {c.code ?? c.name}
+                    </button>
+                  );
+                })}
+                {(!classes || classes.length === 0) && (
+                  <p className="text-xs font-medium text-slate-400">Belum ada kelas. Buat kelas di tab Kelas terlebih dahulu.</p>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-3 pt-2">
@@ -1264,6 +1528,7 @@ export default function AdminDashboardPage() {
             {tab === 'overview' && <Overview goTo={setTab} />}
             {tab === 'users' && <UsersTab />}
             {tab === 'subjects' && <SubjectsTab />}
+            {tab === 'classes' && <ClassesTab />}
             {tab === 'exams' && <ExamsTab />}
             {tab === 'live' && <LiveMonitorTab />}
             {tab === 'blocked' && <BlockedTab />}

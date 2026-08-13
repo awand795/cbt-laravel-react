@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Classroom;
 use App\Models\Exam;
 use App\Models\ExamAnswer;
 use App\Models\ExamSession;
@@ -22,7 +23,7 @@ class TeacherExamController extends Controller
     public function index(Request $request): JsonResponse
     {
         $exams = Exam::query()
-            ->with(['subject:id,name,code'])
+            ->with(['subject:id,name,code', 'classrooms:id,name,code'])
             ->withCount(['questions', 'sessions'])
             ->where('created_by', $request->user()->id)
             ->orderByDesc('id')
@@ -43,15 +44,19 @@ class TeacherExamController extends Controller
             return $this->validationError($e);
         }
 
+        $classIds = $validated['class_ids'] ?? [];
+        unset($validated['class_ids']);
+
         $exam = Exam::create([
             ...$validated,
             'created_by' => $request->user()->id,
         ]);
+        $exam->classrooms()->sync($classIds);
 
         return response()->json([
             'success' => true,
             'message' => 'Ujian berhasil dibuat.',
-            'data' => $this->examPayload($exam->load(['subject:id,name,code'])),
+            'data' => $this->examPayload($exam->load(['subject:id,name,code', 'classrooms:id,name,code'])),
         ], 201);
     }
 
@@ -69,12 +74,16 @@ class TeacherExamController extends Controller
             return $this->validationError($e);
         }
 
+        $classIds = $validated['class_ids'] ?? [];
+        unset($validated['class_ids']);
+
         $exam->update($validated);
+        $exam->classrooms()->sync($classIds);
 
         return response()->json([
             'success' => true,
             'message' => 'Ujian berhasil diperbarui.',
-            'data' => $this->examPayload($exam->fresh(['subject:id,name,code'])),
+            'data' => $this->examPayload($exam->fresh(['subject:id,name,code', 'classrooms:id,name,code'])),
         ]);
     }
 
@@ -96,7 +105,7 @@ class TeacherExamController extends Controller
     }
 
     /* ============================================================
-       Subjects (dibaca guru untuk mengisi form ujian)
+       Subjects & Classes (dibaca guru untuk mengisi form ujian)
        ============================================================ */
 
     public function subjects(): JsonResponse
@@ -109,6 +118,19 @@ class TeacherExamController extends Controller
             'success' => true,
             'message' => 'Daftar mata pelajaran berhasil dimuat.',
             'data' => $subjects,
+        ]);
+    }
+
+    public function classes(): JsonResponse
+    {
+        $classes = Classroom::query()
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Daftar kelas berhasil dimuat.',
+            'data' => $classes,
         ]);
     }
 
@@ -468,6 +490,8 @@ class TeacherExamController extends Controller
             'start_time' => ['nullable', 'date'],
             'end_time' => ['nullable', 'date', 'after:start_time'],
             'status' => ['nullable', Rule::in(['draft', 'published', 'closed'])],
+            'class_ids' => ['nullable', 'array'],
+            'class_ids.*' => ['integer', 'exists:classes,id'],
         ]);
     }
 
@@ -484,6 +508,8 @@ class TeacherExamController extends Controller
             'start_time' => $exam->start_time?->toIso8601String(),
             'end_time' => $exam->end_time?->toIso8601String(),
             'status' => $exam->status,
+            'class_ids' => $exam->classrooms->pluck('id')->all(),
+            'class_names' => $exam->classrooms->pluck('name')->all(),
             'questions_count' => $exam->questions_count ?? $exam->questions()->count(),
             'sessions_count' => $exam->sessions_count ?? $exam->sessions()->count(),
         ];

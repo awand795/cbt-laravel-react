@@ -31,6 +31,7 @@ Route::middleware(['auth:sanctum', 'role:student'])->prefix('student')->group(fu
    ============================================================ */
 Route::middleware(['auth:sanctum', 'role:teacher'])->prefix('teacher')->group(function () {
     Route::get('/subjects', [TeacherExamController::class, 'subjects']);
+    Route::get('/classes', [TeacherExamController::class, 'classes']);
     Route::get('/exams', [TeacherExamController::class, 'index']);
     Route::post('/exams', [TeacherExamController::class, 'store']);
     Route::put('/exams/{id}', [TeacherExamController::class, 'update']);
@@ -63,6 +64,12 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin')->group(functi
     Route::post('/subjects', [AdminController::class, 'storeSubject']);
     Route::put('/subjects/{id}', [AdminController::class, 'updateSubject']);
     Route::delete('/subjects/{id}', [AdminController::class, 'destroySubject']);
+
+    // Classes (Kelas)
+    Route::get('/classes', [AdminController::class, 'classes']);
+    Route::post('/classes', [AdminController::class, 'storeClass']);
+    Route::put('/classes/{id}', [AdminController::class, 'updateClass']);
+    Route::delete('/classes/{id}', [AdminController::class, 'destroyClass']);
 
     // Exams
     Route::get('/exams', [AdminController::class, 'exams']);

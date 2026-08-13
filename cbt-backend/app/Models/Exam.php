@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Exam extends Model
@@ -45,5 +46,24 @@ class Exam extends Model
     public function sessions(): HasMany
     {
         return $this->hasMany(ExamSession::class);
+    }
+
+    public function classrooms(): BelongsToMany
+    {
+        return $this->belongsToMany(Classroom::class, 'exam_class', 'exam_id', 'class_id');
+    }
+
+    /**
+     * Ujian terlihat oleh kelas tertentu? `true` jika belum ditetapkan ke
+     * kelas mana pun (berarti berlaku untuk semua siswa).
+     */
+    public function isVisibleToStudent(?User $user): bool
+    {
+        if (! $user || ! $user->class_id) {
+            return $this->classrooms()->count() === 0;
+        }
+
+        return $this->classrooms()->count() === 0
+            || $this->classrooms()->whereKey($user->class_id)->exists();
     }
 }

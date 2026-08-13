@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Classroom;
 use App\Models\Exam;
 use App\Models\ExamSession;
 use App\Models\Subject;
@@ -31,6 +32,7 @@ class AdminController extends Controller
                 'students' => User::where('role', 'student')->count(),
                 'teachers' => User::where('role', 'teacher')->count(),
                 'admins' => User::where('role', 'admin')->count(),
+                'classes' => Classroom::count(),
                 'subjects' => Subject::count(),
                 'exams' => Exam::count(),
                 'published_exams' => Exam::where('status', 'published')->count(),
@@ -80,12 +82,7 @@ class AdminController extends Controller
     public function storeUser(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'name' => ['required', 'string', 'max:255'],
-                'email' => ['required', 'email', 'max:255', 'unique:users,email'],
-                'password' => ['required', 'string', 'min:8'],
-                'role' => ['required', Rule::in(self::ROLES)],
-            ]);
+            $validated = $this->validateUserPayload($request, null);
         } catch (ValidationException $e) {
             return $this->validationError($e);
         }
@@ -95,6 +92,7 @@ class AdminController extends Controller
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
             'role' => $validated['role'],
+            'class_id' => $validated['class_id'] ?? null,
         ]);
 
         return response()->json([
@@ -113,12 +111,7 @@ class AdminController extends Controller
         }
 
         try {
-            $validated = $request->validate([
-                'name' => ['required', 'string', 'max:255'],
-                'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
-                'password' => ['nullable', 'string', 'min:8'],
-                'role' => ['required', Rule::in(self::ROLES)],
-            ]);
+            $validated = $this->validateUserPayload($request, $user);
         } catch (ValidationException $e) {
             return $this->validationError($e);
         }
@@ -135,6 +128,7 @@ class AdminController extends Controller
         $user->name = $validated['name'];
         $user->email = $validated['email'];
         $user->role = $validated['role'];
+        $user->class_id = $validated['class_id'] ?? null;
 
         if (! empty($validated['password'])) {
             $user->password = Hash::make($validated['password']);
@@ -283,7 +277,7 @@ class AdminController extends Controller
     public function exams(): JsonResponse
     {
         $exams = Exam::query()
-            ->with(['subject:id,name,code', 'creator:id,name'])
+            ->with(['subject:id,name,code', 'creator:id,name', 'classrooms:id,name,code'])
             ->withCount(['questions', 'sessions'])
             ->orderByDesc('id')
             ->get();
@@ -303,15 +297,19 @@ class AdminController extends Controller
             return $this->validationError($e);
         }
 
+        $classIds = $validated['class_ids'] ?? [];
+        unset($validated['class_ids']);
+
         $exam = Exam::create([
             ...$validated,
             'created_by' => $request->user()->id,
         ]);
+        $exam->classrooms()->sync($classIds);
 
         return response()->json([
             'success' => true,
             'message' => 'Ujian berhasil dibuat.',
-            'data' => $this->examPayload($exam->load(['subject:id,name,code', 'creator:id,name'])),
+            'data' => $this->examPayload($exam->load(['subject:id,name,code', 'creator:id,name', 'classrooms:id,name,code'])),
         ], 201);
     }
 
@@ -329,12 +327,16 @@ class AdminController extends Controller
             return $this->validationError($e);
         }
 
+        $classIds = $validated['class_ids'] ?? [];
+        unset($validated['class_ids']);
+
         $exam->update($validated);
+        $exam->classrooms()->sync($classIds);
 
         return response()->json([
             'success' => true,
             'message' => 'Ujian berhasil diperbarui.',
-            'data' => $this->examPayload($exam->fresh(['subject:id,name,code', 'creator:id,name'])),
+            'data' => $this->examPayload($exam->fresh(['subject:id,name,code', 'creator:id,name', 'classrooms:id,name,code'])),
         ]);
     }
 
@@ -376,6 +378,95 @@ class AdminController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Ujian berhasil dihapus.',
+            'data' => null,
+        ]);
+    }
+
+    /* ============================================================
+       Classes (Kelas)
+       ============================================================ */
+
+    public function classes(): JsonResponse
+    {
+        $classes = Classroom::query()
+            ->withCount('students')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Daftar kelas berhasil dimuat.',
+            'data' => $classes->map(fn (Classroom $c) => $this->classPayload($c)),
+        ]);
+    }
+
+    public function storeClass(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'name' => ['required', 'string', 'max:255'],
+                'code' => ['nullable', 'string', 'max:20'],
+            ]);
+        } catch (ValidationException $e) {
+            return $this->validationError($e);
+        }
+
+        $class = Classroom::create($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Kelas berhasil dibuat.',
+            'data' => $this->classPayload($class->loadCount('students')),
+        ], 201);
+    }
+
+    public function updateClass(Request $request, int $id): JsonResponse
+    {
+        $class = Classroom::find($id);
+
+        if (! $class) {
+            return $this->notFound('Kelas tidak ditemukan.');
+        }
+
+        try {
+            $validated = $request->validate([
+                'name' => ['required', 'string', 'max:255'],
+                'code' => ['nullable', 'string', 'max:20'],
+            ]);
+        } catch (ValidationException $e) {
+            return $this->validationError($e);
+        }
+
+        $class->update($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Kelas berhasil diperbarui.',
+            'data' => $this->classPayload($class->fresh()->loadCount('students')),
+        ]);
+    }
+
+    public function destroyClass(int $id): JsonResponse
+    {
+        $class = Classroom::find($id);
+
+        if (! $class) {
+            return $this->notFound('Kelas tidak ditemukan.');
+        }
+
+        if ($class->students()->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kelas masih memiliki siswa. Pindahkan siswa terlebih dahulu.',
+                'data' => null,
+            ], 422);
+        }
+
+        $class->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Kelas berhasil dihapus.',
             'data' => null,
         ]);
     }
@@ -472,6 +563,19 @@ class AdminController extends Controller
             'start_time' => ['nullable', 'date'],
             'end_time' => ['nullable', 'date', 'after:start_time'],
             'status' => ['nullable', Rule::in(self::EXAM_STATUSES)],
+            'class_ids' => ['nullable', 'array'],
+            'class_ids.*' => ['integer', 'exists:classes,id'],
+        ]);
+    }
+
+    private function validateUserPayload(Request $request, ?User $existing): array
+    {
+        return $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'max:255', $existing ? Rule::unique('users', 'email')->ignore($existing->id) : 'unique:users,email'],
+            'password' => [$existing ? 'nullable' : 'required', 'string', 'min:8'],
+            'role' => ['required', Rule::in(self::ROLES)],
+            'class_id' => ['nullable', 'integer', 'exists:classes,id'],
         ]);
     }
 
@@ -482,7 +586,19 @@ class AdminController extends Controller
             'name' => $user->name,
             'email' => $user->email,
             'role' => $user->role,
+            'class_id' => $user->class_id,
+            'class_name' => $user->classroom?->name,
             'created_at' => $user->created_at?->toIso8601String(),
+        ];
+    }
+
+    private function classPayload(Classroom $class): array
+    {
+        return [
+            'id' => $class->id,
+            'name' => $class->name,
+            'code' => $class->code,
+            'students_count' => $class->students_count ?? $class->students()->count(),
         ];
     }
 
@@ -501,6 +617,8 @@ class AdminController extends Controller
             'start_time' => $exam->start_time?->toIso8601String(),
             'end_time' => $exam->end_time?->toIso8601String(),
             'status' => $exam->status,
+            'class_ids' => $exam->classrooms->pluck('id')->all(),
+            'class_names' => $exam->classrooms->pluck('name')->all(),
             'questions_count' => $exam->questions_count ?? $exam->questions()->count(),
             'sessions_count' => $exam->sessions_count ?? $exam->sessions()->count(),
         ];

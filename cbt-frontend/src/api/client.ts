@@ -173,7 +173,16 @@ export interface UserRecord {
   name: string;
   email: string;
   role: 'admin' | 'teacher' | 'student';
+  class_id: number | null;
+  class_name: string | null;
   created_at: string | null;
+}
+
+export interface ClassroomRecord {
+  id: number;
+  name: string;
+  code: string | null;
+  students_count?: number;
 }
 
 export interface SubjectRecord {
@@ -196,6 +205,8 @@ export interface AdminExam {
   start_time: string | null;
   end_time: string | null;
   status: 'draft' | 'published' | 'closed';
+  class_ids: number[];
+  class_names: string[];
   questions_count: number;
   sessions_count: number;
 }
@@ -217,6 +228,7 @@ export interface AdminStats {
   students: number;
   teachers: number;
   admins: number;
+  classes: number;
   subjects: number;
   exams: number;
   published_exams: number;
@@ -254,6 +266,7 @@ export async function createUser(payload: {
   email: string;
   password: string;
   role: 'admin' | 'teacher' | 'student';
+  class_id?: number | null;
 }): Promise<UserRecord> {
   const { data } = await api.post<ApiResponse<UserRecord>>('/admin/users', payload);
   return data.data;
@@ -261,10 +274,29 @@ export async function createUser(payload: {
 
 export async function updateUser(
   id: number,
-  payload: { name: string; email: string; password?: string; role: 'admin' | 'teacher' | 'student' },
+  payload: { name: string; email: string; password?: string; role: 'admin' | 'teacher' | 'student'; class_id?: number | null },
 ): Promise<UserRecord> {
   const { data } = await api.put<ApiResponse<UserRecord>>(`/admin/users/${id}`, payload);
   return data.data;
+}
+
+export async function fetchClasses(): Promise<ClassroomRecord[]> {
+  const { data } = await api.get<ApiResponse<ClassroomRecord[]>>('/admin/classes');
+  return data.data;
+}
+
+export async function createClass(payload: { name: string; code?: string }): Promise<ClassroomRecord> {
+  const { data } = await api.post<ApiResponse<ClassroomRecord>>('/admin/classes', payload);
+  return data.data;
+}
+
+export async function updateClass(id: number, payload: { name: string; code?: string }): Promise<ClassroomRecord> {
+  const { data } = await api.put<ApiResponse<ClassroomRecord>>(`/admin/classes/${id}`, payload);
+  return data.data;
+}
+
+export async function deleteClass(id: number): Promise<void> {
+  await api.delete(`/admin/classes/${id}`);
 }
 
 export async function deleteUser(id: number): Promise<void> {
@@ -337,6 +369,7 @@ export interface ExamPayload {
   start_time?: string | null;
   end_time?: string | null;
   status?: 'draft' | 'published' | 'closed';
+  class_ids?: number[];
 }
 
 /* ============================================================
@@ -345,6 +378,11 @@ export interface ExamPayload {
 
 export async function fetchTeacherSubjects(): Promise<SubjectRecord[]> {
   const { data } = await api.get<ApiResponse<SubjectRecord[]>>('/teacher/subjects');
+  return data.data;
+}
+
+export async function fetchTeacherClasses(): Promise<ClassroomRecord[]> {
+  const { data } = await api.get<ApiResponse<ClassroomRecord[]>>('/teacher/classes');
   return data.data;
 }
 

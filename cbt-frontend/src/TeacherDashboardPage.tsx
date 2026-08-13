@@ -32,6 +32,7 @@ import {
   fetchQuestionBank,
   fetchResults,
   fetchSessionDetail,
+  fetchTeacherClasses,
   fetchTeacherExams,
   fetchTeacherSubjects,
   gradeEssayRequest,
@@ -253,10 +254,12 @@ function ExamsTab() {
     start_time: '',
     end_time: '',
     status: 'draft',
+    class_ids: [] as number[],
   });
 
   const { data: exams, isLoading } = useQuery({ queryKey: ['teacher-exams'], queryFn: fetchTeacherExams });
   const { data: subjects } = useQuery({ queryKey: ['teacher-subjects'], queryFn: fetchTeacherSubjects });
+  const { data: classes } = useQuery({ queryKey: ['teacher-classes'], queryFn: fetchTeacherClasses });
 
   const saveMutation = useMutation({
     mutationFn: () => {
@@ -268,6 +271,7 @@ function ExamsTab() {
         start_time: form.start_time ? new Date(form.start_time).toISOString() : null,
         end_time: form.end_time ? new Date(form.end_time).toISOString() : null,
         status: form.status as 'draft' | 'published' | 'closed',
+        class_ids: form.class_ids,
       };
       return editing ? updateTeacherExam(editing.id, payload) : createTeacherExam(payload);
     },
@@ -295,6 +299,7 @@ function ExamsTab() {
         start_time: e.start_time ?? null,
         end_time: e.end_time ?? null,
         status,
+        class_ids: e.class_ids,
       });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teacher-exams'] }),
@@ -315,7 +320,7 @@ function ExamsTab() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ subject_id: subjects?.[0] ? String(subjects[0].id) : '', title: '', description: '', duration_minutes: '60', start_time: '', end_time: '', status: 'draft' });
+    setForm({ subject_id: subjects?.[0] ? String(subjects[0].id) : '', title: '', description: '', duration_minutes: '60', start_time: '', end_time: '', status: 'draft', class_ids: [] });
     setError(null);
     setCreating(true);
   };
@@ -331,8 +336,18 @@ function ExamsTab() {
       start_time: formatDateTimeLocal(e.start_time),
       end_time: formatDateTimeLocal(e.end_time),
       status: e.status,
+      class_ids: [...e.class_ids],
     });
     setError(null);
+  };
+
+  const toggleClass = (id: number) => {
+    setForm((prev) => ({
+      ...prev,
+      class_ids: prev.class_ids.includes(id)
+        ? prev.class_ids.filter((x) => x !== id)
+        : [...prev.class_ids, id],
+    }));
   };
 
   return (
@@ -466,6 +481,33 @@ function ExamsTab() {
               <div>
                 <label className="mb-1.5 block text-sm font-semibold text-slate-700">Berakhir</label>
                 <input type="datetime-local" className={inputCls} value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+                Kelas Peserta <span className="font-normal text-slate-400">(kosongkan = semua kelas)</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {classes?.map((c) => {
+                  const active = form.class_ids.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => toggleClass(c.id)}
+                      className={`rounded-xl px-3.5 py-2 text-xs font-bold transition-all duration-200 ${
+                        active
+                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
+                          : 'border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-600'
+                      }`}
+                    >
+                      {c.code ?? c.name}
+                    </button>
+                  );
+                })}
+                {(!classes || classes.length === 0) && (
+                  <p className="text-xs font-medium text-slate-400">Belum ada kelas. Minta admin membuat kelas terlebih dahulu.</p>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-3 pt-2">

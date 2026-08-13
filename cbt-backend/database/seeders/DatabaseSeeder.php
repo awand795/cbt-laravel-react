@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\User;
 use App\Models\Subject;
+use App\Models\Classroom;
 use App\Models\Exam;
 use App\Models\Question;
 use App\Models\Option;
@@ -27,28 +28,42 @@ class DatabaseSeeder extends Seeder
             'password' => Hash::make('password'),
             'role' => 'teacher'
         ]);
+        // Kelas
+        $classA = Classroom::create(['name' => 'Kelas IX-A', 'code' => 'IX-A']);
+        $classB = Classroom::create(['name' => 'Kelas IX-B', 'code' => 'IX-B']);
+
         User::create([
             'name' => 'Siswa Teladan',
             'email' => 'siswa@cbt.com',
             'password' => Hash::make('password'),
-            'role' => 'student'
+            'role' => 'student',
+            'class_id' => $classA->id,
+        ]);
+        User::create([
+            'name' => 'Siswa Kelas B',
+            'email' => 'siswab@cbt.com',
+            'password' => Hash::make('password'),
+            'role' => 'student',
+            'class_id' => $classB->id,
         ]);
 
         // Subject
         $subject = Subject::create(['name' => 'Matematika Dasar', 'code' => 'MTK']);
 
-        // Exam — dimiliki oleh akun Guru agar bisa dikelola lewat panel guru
+        // Exam — dimiliki oleh akun Guru agar bisa dikelola lewat panel guru,
+        // khusus untuk Kelas IX-A (siswa kelas lain tidak melihat ujian ini)
         $teacher = User::where('email', 'guru@cbt.com')->first();
         $exam = Exam::create([
             'subject_id' => $subject->id,
             'created_by' => $teacher?->id,
             'title' => 'Ujian Akhir Semester Matematika',
-            'description' => 'Ujian Akhir Semester ganjil — kerjakan dengan jujur.',
+            'description' => 'Ujian Akhir Semester ganjil — khusus Kelas IX-A.',
             'duration_minutes' => 60,
             'status' => 'published',
             'start_time' => now()->subDay(),
             'end_time' => now()->addDays(7),
         ]);
+        $exam->classrooms()->attach($classA->id);
 
         // Question 1
         $q1 = Question::create([
