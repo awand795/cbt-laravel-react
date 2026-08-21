@@ -13,6 +13,8 @@
     "@tanstack/react-query": "^5.101.3",
     "@tanstack/react-router": "^1.170.18",
     "axios": "^1.18.1",
+    "laravel-echo": "^2.4.0",
+    "pusher-js": "^8.6.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-icons": "^5.7.0",

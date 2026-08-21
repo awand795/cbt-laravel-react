@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import {
@@ -25,6 +25,7 @@ import {
   FaDatabase,
   FaPlay,
   FaPause,
+  FaWifi,
 } from 'react-icons/fa';
 import {
   createClass,
@@ -37,11 +38,19 @@ import {
   deleteUser,
   fetchAdminExams,
   fetchAdminStats,
+  fetchAnalyticsOverview,
   fetchBlockedSessions,
   fetchClasses,
+  fetchGradebook,
   fetchLiveMonitor,
   fetchSubjects,
   fetchUsers,
+  getExportUrl,
+  getGradebookExportUrl,
+  getTemplateUrl,
+  importStudentsCsv,
+  importQuestionsCsv,
+  extendSessionTime,
   unblockSession,
   updateClass,
   updateExam,
@@ -49,22 +58,29 @@ import {
   updateSubject,
   updateUser,
   type AdminExam,
+  type AnalyticsOverview,
   type ClassroomRecord,
+  type GradebookClass,
   type SubjectRecord,
   type UserRecord,
 } from './api/client';
+import { getEcho, type MonitorEvent, type MonitorSession } from './api/realtime';
 import { useAuthStore } from './store/authStore';
+import { useThemeStore } from './store/themeStore';
 
-type Tab = 'overview' | 'users' | 'subjects' | 'classes' | 'exams' | 'live' | 'blocked';
+type Tab = 'overview' | 'users' | 'subjects' | 'classes' | 'exams' | 'live' | 'blocked' | 'analytics' | 'gradebook' | 'import';
 
 const TABS: { id: Tab; label: string; icon: typeof FaTv }[] = [
   { id: 'overview', label: 'Ringkasan', icon: FaTv },
   { id: 'users', label: 'Pengguna', icon: FaUsers },
-  { id: 'subjects', label: 'Mata Pelajaran', icon: FaLayerGroup },
+  { id: 'subjects', label: 'Mapel', icon: FaLayerGroup },
   { id: 'classes', label: 'Kelas', icon: FaUsers },
   { id: 'exams', label: 'Ujian', icon: FaClipboardList },
   { id: 'live', label: 'Live Monitor', icon: FaTv },
   { id: 'blocked', label: 'Terblokir', icon: FaLock },
+  { id: 'analytics', label: 'Analitik', icon: FaTv },
+  { id: 'gradebook', label: 'Buku Nilai', icon: FaClipboardList },
+  { id: 'import', label: 'Import/Export', icon: FaDatabase },
 ];
 
 const ROLE_BADGE: Record<string, { label: string; cls: string }> = {
@@ -1195,18 +1211,67 @@ function ExamsTab() {
 
 /* ============ Live monitor tab ============ */
 
+const EVENT_LABEL: Record<MonitorEvent['type'], string> = {
+  start: 'mulai mengerjakan',
+  blocked: 'terblokir karena pelanggaran',
+  unblocked: 'dibuka kembali oleh admin',
+  finished: 'mengumpulkan ujian',
+};
+
 function LiveMonitorTab() {
+  const queryClient = useQueryClient();
   const [selectedExamId, setSelectedExamId] = useState<number | null>(null);
+  const [wsSessions, setWsSessions] = useState<Record<number, MonitorSession>>({});
+  const [lastEvent, setLastEvent] = useState<MonitorEvent | null>(null);
+  const [connected, setConnected] = useState(false);
   const { data: exams } = useQuery({ queryKey: ['admin-exams'], queryFn: fetchAdminExams });
 
   const activeExamId = selectedExamId ?? exams?.[0]?.id ?? null;
 
+  // Snapshot awal (satu kali) — update berikutnya murni dari WebSocket
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['live-monitor', activeExamId],
     queryFn: () => fetchLiveMonitor(activeExamId!),
     enabled: activeExamId != null,
-    refetchInterval: 5000,
   });
+
+  // Berlangganan channel privat admin.monitor (WebSocket Reverb)
+  useEffect(() => {
+    const echo = getEcho();
+    setConnected(echo.connectionStatus() === 'connected');
+    const off = echo.connector.onConnectionChange(() => setConnected(echo.connectionStatus() === 'connected'));
+
+    const channel = echo.private('admin.monitor');
+    const handler = (e: MonitorEvent) => {
+      setWsSessions((prev) => ({ ...prev, [e.session.id]: e.session }));
+      setLastEvent(e);
+    };
+    channel.listen('App\\Events\\ExamSessionUpdated', handler);
+
+    return () => {
+      off();
+      echo.leaveChannel('admin.monitor');
+    };
+  }, []);
+
+  // Gabungkan snapshot REST + update real-time dari WebSocket
+  const mergedSessions = useMemo(() => {
+    const byId = new Map<number, MonitorSession>();
+    (data?.sessions ?? []).forEach((s) => byId.set(s.id, s));
+    Object.values(wsSessions)
+      .filter((s) => s.exam_id === activeExamId)
+      .forEach((s) => byId.set(s.id, s));
+    return [...byId.values()].sort((a, b) => b.id - a.id);
+  }, [data, wsSessions, activeExamId]);
+
+  const extraCount = useMemo(
+    () =>
+      Object.values(wsSessions).filter(
+        (s) => s.exam_id === activeExamId && !(data?.sessions ?? []).some((x) => x.id === s.id),
+      ).length,
+    [wsSessions, activeExamId, data],
+  );
+  const sessionsCount = (data?.exam.sessions_count ?? 0) + extraCount;
 
   return (
     <div className="space-y-5">
@@ -1227,13 +1292,38 @@ function LiveMonitorTab() {
             )}
           </select>
         </div>
-        <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping-slow rounded-full bg-emerald-400" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+        <div className="flex flex-col items-end gap-2">
+          <span
+            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold ring-1 transition-colors ${
+              connected
+                ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                : 'bg-rose-50 text-rose-700 ring-rose-200'
+            }`}
+          >
+            {connected ? (
+              <>
+                <FaWifi aria-hidden="true" /> Live · WebSocket
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping-slow rounded-full bg-emerald-400" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+              </>
+            ) : (
+              <>
+                <FaWifi aria-hidden="true" /> Menghubungkan WebSocket…
+                <span className="relative flex h-2 w-2">
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+                </span>
+              </>
+            )}
           </span>
-          Memperbarui otomatis tiap 5 detik
-        </span>
+          {lastEvent && connected && (
+            <span className="text-[11px] font-semibold text-slate-400">
+              {lastEvent.session.user_name} — {EVENT_LABEL[lastEvent.type] ?? lastEvent.type} ·{' '}
+              {new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
+          )}
+        </div>
       </div>
 
       {isError && (
@@ -1248,7 +1338,7 @@ function LiveMonitorTab() {
           <div className="flex items-center gap-3 text-xs font-bold text-slate-500">
             <span>{data?.exam.questions_count ?? 0} soal</span>
             <span className="text-slate-300">·</span>
-            <span>{data?.exam.sessions_count ?? 0} sesi</span>
+            <span>{sessionsCount} sesi</span>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -1260,15 +1350,16 @@ function LiveMonitorTab() {
                 <th className="px-5 py-3.5">Pelanggaran</th>
                 <th className="px-5 py-3.5">Mulai</th>
                 <th className="px-5 py-3.5">Selesai</th>
+                <th className="px-5 py-3.5">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {isLoading ? (
                 <tr><td colSpan={5} className="px-5 py-10 text-center"><FaSpinner className="mx-auto animate-spin text-indigo-500" aria-hidden="true" /></td></tr>
-              ) : !data || data.sessions.length === 0 ? (
-                <tr><td colSpan={5} className="px-5 py-10 text-center text-sm font-medium text-slate-400">Belum ada peserta yang mengikuti ujian ini.</td></tr>
+              ) : mergedSessions.length === 0 ? (
+                <tr><td colSpan={6} className="px-5 py-10 text-center text-sm font-medium text-slate-400">Belum ada peserta yang mengikuti ujian ini.</td></tr>
               ) : (
-                data.sessions.map((s) => {
+                mergedSessions.map((s) => {
                   const cfg = SESSION_STATUS[s.status] ?? SESSION_STATUS.finished;
                   return (
                     <tr key={s.id} className="transition-colors hover:bg-indigo-50/40">
@@ -1284,6 +1375,24 @@ function LiveMonitorTab() {
                       </td>
                       <td className="px-5 py-3.5 font-mono text-xs text-slate-500">{formatDate(s.started_at)}</td>
                       <td className="px-5 py-3.5 font-mono text-xs text-slate-500">{formatDate(s.finished_at)}</td>
+                      <td className="px-5 py-3.5">
+                        {s.status === 'ongoing' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const mins = prompt('Tambah berapa menit? (1-120)');
+                              if (mins && !isNaN(Number(mins)) && Number(mins) > 0) {
+                                extendSessionTime(s.id, Number(mins)).then(() => {
+                                  queryClient.invalidateQueries({ queryKey: ['live-monitor'] });
+                                });
+                              }
+                            }}
+                            className="rounded-lg bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-100"
+                          >
+                            + Waktu
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })
@@ -1301,12 +1410,35 @@ function LiveMonitorTab() {
 function BlockedTab() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
 
   const { data: sessions, isLoading, refetch } = useQuery({
     queryKey: ['admin-blocked'],
     queryFn: fetchBlockedSessions,
-    refetchInterval: 10000,
   });
+
+  // Real-time: daftar sesi terblokir langsung segar saat ada event
+  // blokir / buka blokir yang masuk lewat WebSocket.
+  useEffect(() => {
+    const echo = getEcho();
+    setConnected(echo.connectionStatus() === 'connected');
+    const off = echo.connector.onConnectionChange(() => setConnected(echo.connectionStatus() === 'connected'));
+
+    const channel = echo.private('admin.monitor');
+    const handler = (e: MonitorEvent) => {
+      if (e.type === 'blocked' || e.type === 'unblocked') {
+        queryClient.invalidateQueries({ queryKey: ['admin-blocked'] });
+        queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+        queryClient.invalidateQueries({ queryKey: ['live-monitor'] });
+      }
+    };
+    channel.listen('App\\Events\\ExamSessionUpdated', handler);
+
+    return () => {
+      off();
+      echo.leaveChannel('admin.monitor');
+    };
+  }, [queryClient]);
 
   const unblockMutation = useMutation({
     mutationFn: unblockSession,
@@ -1325,13 +1457,25 @@ function BlockedTab() {
     <div className="space-y-5">
       {error && <AlertBanner message={error} />}
 
-      <div className="flex items-center justify-between rounded-3xl border border-rose-200 bg-rose-50/60 px-5 py-4">
+      <div className="flex items-center justify-between gap-4 rounded-3xl border border-rose-200 bg-rose-50/60 px-5 py-4">
         <p className="text-sm font-semibold text-rose-700">
           Sesi yang terblokir harus dibuka kembali secara manual oleh admin sebelum siswa dapat melanjutkan ujian.
         </p>
-        <button type="button" onClick={() => refetch()} className="shrink-0 rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50">
-          Segarkan
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold ring-1 ${
+              connected
+                ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                : 'bg-rose-50 text-rose-700 ring-rose-200'
+            }`}
+          >
+            <FaWifi aria-hidden="true" />
+            {connected ? 'Live' : 'Menghubungkan…'}
+          </span>
+          <button type="button" onClick={() => refetch()} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50">
+            Segarkan
+          </button>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
@@ -1402,6 +1546,333 @@ function BlockedTab() {
   );
 }
 
+/* ============ Analytics Tab ============ */
+
+function AnalyticsTab() {
+  const { data: analytics, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['admin-analytics'],
+    queryFn: fetchAnalyticsOverview,
+  });
+
+  if (isLoading) {
+    return <div className="flex justify-center py-16"><FaSpinner className="animate-spin text-3xl text-indigo-500" /></div>;
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center rounded-3xl border border-slate-200 bg-white px-8 py-14 text-center shadow-sm">
+        <FaExclamationTriangle className="text-2xl text-rose-500" />
+        <p className="mt-3 text-sm font-semibold text-slate-600">{error instanceof Error ? error.message : 'Gagal memuat analitik.'}</p>
+        <button type="button" onClick={() => refetch()} className="mt-5 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white">Coba Lagi</button>
+      </div>
+    );
+  }
+
+  const dist = analytics?.score_distribution ?? {};
+  const distTotal = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {[
+          { label: 'Total Ujian', value: analytics?.total_exams ?? 0, grad: 'from-indigo-500 to-violet-600' },
+          { label: 'Total Sesi', value: analytics?.total_sessions ?? 0, grad: 'from-emerald-500 to-teal-600' },
+          { label: 'Selesai', value: analytics?.finished_sessions ?? 0, grad: 'from-sky-500 to-cyan-600' },
+          { label: 'Rata-rata Nilai', value: analytics?.average_score != null ? `${analytics.average_score}%` : '—', grad: 'from-amber-500 to-orange-600' },
+        ].map((c) => (
+          <div key={c.label} className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm">
+            <span className={`flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br ${c.grad} text-sm text-white shadow-lg`}>📊</span>
+            <p className="mt-4 font-mono text-3xl font-bold tabular-nums tracking-tight text-slate-900">{c.value}</p>
+            <p className="mt-1 text-xs font-bold uppercase tracking-wider text-slate-400">{c.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Score Distribution */}
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm">
+        <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-700 mb-4">Distribusi Nilai</h3>
+        <div className="space-y-3">
+          {['0-20', '21-40', '41-60', '61-80', '81-100'].map((range) => {
+            const count = dist[range] ?? 0;
+            const pct = Math.round((count / distTotal) * 100);
+            const colors = ['bg-rose-500', 'bg-amber-500', 'bg-yellow-500', 'bg-emerald-500', 'bg-indigo-500'];
+            const idx = ['0-20', '21-40', '41-60', '61-80', '81-100'].indexOf(range);
+            return (
+              <div key={range}>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-semibold text-slate-600">{range}</span>
+                  <span className="font-mono font-bold text-slate-700">{count} ({pct}%)</span>
+                </div>
+                <div className="mt-1.5 h-3 overflow-hidden rounded-full bg-slate-100">
+                  <div className={`h-full rounded-full ${colors[idx]} transition-all duration-700`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Exams per Subject */}
+      {analytics?.exams_per_subject && Object.keys(analytics.exams_per_subject).length > 0 && (
+        <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm">
+          <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-700 mb-4">Ujian per Mata Pelajaran</h3>
+          <div className="space-y-2">
+            {Object.entries(analytics.exams_per_subject).map(([subject, count]) => (
+              <div key={subject} className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-2.5">
+                <span className="text-sm font-bold text-slate-700">{subject}</span>
+                <span className="font-mono text-sm font-bold text-indigo-600">{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Activity Chart */}
+      {analytics?.activity_last_30_days && analytics.activity_last_30_days.length > 0 && (
+        <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm">
+          <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-700 mb-4">Aktivitas 30 Hari Terakhir</h3>
+          <div className="flex items-end gap-1 h-32">
+            {analytics.activity_last_30_days.map((d) => {
+              const maxCount = Math.max(...analytics.activity_last_30_days.map((x) => x.count), 1);
+              const height = Math.max(4, (d.count / maxCount) * 100);
+              return (
+                <div key={d.date} className="flex-1 flex flex-col items-center gap-1" title={`${d.date}: ${d.count} sesi`}>
+                  <span className="text-[9px] font-bold text-slate-400">{d.count}</span>
+                  <div className="w-full bg-indigo-500 rounded-t transition-all duration-500" style={{ height: `${height}%` }} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============ Gradebook Tab ============ */
+
+function GradebookTab() {
+  const [selectedClass, setSelectedClass] = useState<number | null>(null);
+  const { data: classes } = useQuery({ queryKey: ['admin-classes'], queryFn: fetchClasses });
+
+  const { data: gradebook, isLoading } = useQuery({
+    queryKey: ['admin-gradebook', selectedClass],
+    queryFn: () => fetchGradebook(selectedClass ?? undefined),
+  });
+
+  const handleDownload = () => {
+    const url = getGradebookExportUrl(selectedClass ?? undefined);
+    window.open(url, '_blank');
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <select
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+            value={selectedClass ?? ''}
+            onChange={(e) => setSelectedClass(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">Semua Kelas</option>
+            {classes?.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+        <button type="button" onClick={handleDownload} className={primaryBtnCls}>
+          <FaDatabase aria-hidden="true" /> Download CSV
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-16"><FaSpinner className="animate-spin text-3xl text-indigo-500" /></div>
+      ) : (
+        <div className="space-y-6">
+          {gradebook?.map((cls) => (
+            <div key={cls.class_id} className="rounded-3xl border border-slate-200/80 bg-white shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+                <div>
+                  <h3 className="text-lg font-extrabold text-slate-900">{cls.class_name}</h3>
+                  <p className="text-xs font-semibold text-slate-400">
+                    {cls.students_count} siswa · Rata-rata: <span className="font-mono text-indigo-600">{cls.class_average ?? '—'}</span>
+                  </p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                      <th className="px-5 py-3">Nama</th>
+                      <th className="px-5 py-3 text-center">Ujian Dikerjakan</th>
+                      <th className="px-5 py-3 text-center">Rata-rata</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {cls.students.map((s) => (
+                      <tr key={s.user_id} className="transition-colors hover:bg-indigo-50/40">
+                        <td className="px-5 py-3 font-bold text-slate-800">{s.name}</td>
+                        <td className="px-5 py-3 text-center font-mono text-sm font-bold text-slate-600">{s.exams_taken}</td>
+                        <td className="px-5 py-3 text-center">
+                          <span className={`font-mono text-sm font-bold ${
+                            s.average_score != null && s.average_score >= 70 ? 'text-emerald-600' :
+                            s.average_score != null && s.average_score >= 50 ? 'text-amber-600' : 'text-rose-600'
+                          }`}>
+                            {s.average_score != null ? s.average_score : '—'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============ Import/Export Tab ============ */
+
+function ImportExportTab() {
+  const queryClient = useQueryClient();
+  const { data: exams } = useQuery({ queryKey: ['admin-exams'], queryFn: fetchAdminExams });
+  const [importResult, setImportResult] = useState<{ type: string; data: { imported: number; skipped: number; errors: string[] } } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedExamId, setSelectedExamId] = useState<number | null>(null);
+
+  const handleFileImport = async (type: 'students' | 'questions', file: File | null) => {
+    if (!file) return;
+    setImporting(true);
+    setError(null);
+    setImportResult(null);
+
+    try {
+      let result;
+      if (type === 'students') {
+        result = await importStudentsCsv(file);
+      } else {
+        if (!selectedExamId) {
+          setError('Pilih ujian terlebih dahulu untuk import soal.');
+          setImporting(false);
+          return;
+        }
+        result = await importQuestionsCsv(file, selectedExamId);
+      }
+      setImportResult({ type, data: result });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
+      setError(msg || 'Gagal import data.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const FileInput = ({ type, label }: { type: 'students' | 'questions'; label: string }) => {
+    const fileRef = useState<null | { name: string; file: File }>(null);
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <p className="text-sm font-bold text-slate-700 mb-2">{label}</p>
+        <input
+          type="file"
+          accept=".csv,.txt"
+          className="block w-full text-sm text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-indigo-600 file:px-4 file:py-2 file:text-sm file:font-bold file:text-white hover:file:bg-indigo-700"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleFileImport(type, f);
+          }}
+          disabled={importing}
+        />
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {error && (
+        <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3.5 text-sm font-medium text-rose-700">
+          <FaExclamationTriangle className="mt-0.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {importResult && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+          <p className="text-sm font-bold text-emerald-800">Import {importResult.type === 'students' ? 'Siswa' : 'Soal'} Selesai</p>
+          <p className="mt-1 text-sm text-emerald-700">
+            {importResult.data.imported} berhasil diimport, {importResult.data.skipped} dilewati.
+          </p>
+          {importResult.data.errors.length > 0 && (
+            <ul className="mt-2 max-h-32 overflow-y-auto text-xs text-rose-600">
+              {importResult.data.errors.map((e, i) => <li key={i}>• {e}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Import Siswa */}
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-extrabold text-slate-900">📥 Import Siswa (CSV)</h3>
+        <p className="mt-1 text-sm text-slate-500">Upload file CSV dengan kolom: nama, email, password, kelas</p>
+        <div className="mt-4 flex items-center gap-3">
+          <a href={getTemplateUrl('students')} target="blank" className="text-xs font-bold text-indigo-600 hover:text-indigo-700 underline">Download Template CSV</a>
+        </div>
+        <div className="mt-4">
+          <FileInput type="students" label="Upload CSV Siswa" />
+        </div>
+      </div>
+
+      {/* Import Soal */}
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-extrabold text-slate-900">📝 Import Soal (CSV)</h3>
+        <p className="mt-1 text-sm text-slate-500">Upload file CSV dengan kolom: tipe, soal, bobot, topik, kesulitan, opsi_a..e, jawaban</p>
+        <div className="mt-4 flex items-center gap-4">
+          <a href={getTemplateUrl('questions')} target="blank" className="text-xs font-bold text-indigo-600 hover:text-indigo-700 underline">Download Template CSV</a>
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none"
+            value={selectedExamId ?? ''}
+            onChange={(e) => setSelectedExamId(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">Pilih Ujian</option>
+            {exams?.map((e) => (
+              <option key={e.id} value={e.id}>{e.title}</option>
+            ))}
+          </select>
+        </div>
+        <div className="mt-4">
+          <FileInput type="questions" label="Upload CSV Soal" />
+        </div>
+      </div>
+
+      {/* Export */}
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-extrabold text-slate-900">📤 Export Data</h3>
+        <div className="mt-4 space-y-3">
+          <a
+            href={getExportUrl('students')}
+            target="blank"
+            className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition-all hover:border-indigo-300 hover:bg-indigo-50"
+          >
+            <FaDatabase className="text-indigo-500" /> Export Semua Siswa (CSV)
+          </a>
+          {exams?.map((e) => (
+            <div key={e.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <span className="flex-1 text-sm font-bold text-slate-700">{e.title}</span>
+              <a href={getExportUrl('questions', e.id)} target="blank" className="rounded-lg bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-100">Export Soal</a>
+              <a href={getExportUrl('results', e.id)} target="blank" className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-600 hover:bg-emerald-100">Export Hasil</a>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ============ Page shell ============ */
 
 export default function AdminDashboardPage() {
@@ -1409,6 +1880,7 @@ export default function AdminDashboardPage() {
   const user = useAuthStore((s) => s.user);
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const [tab, setTab] = useState<Tab>('overview');
+  const { theme, toggleTheme } = useThemeStore();
 
   const handleLogout = async () => {
     clearAuth();
@@ -1461,8 +1933,15 @@ export default function AdminDashboardPage() {
             </div>
             <button
               type="button"
+              onClick={toggleTheme}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition-all duration-300 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+            >
+              {theme === 'dark' ? '☀️' : '🌙'} {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            </button>
+            <button
+              type="button"
               onClick={handleLogout}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition-all duration-300 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition-all duration-300 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
             >
               <FaSignOutAlt className="text-xs" aria-hidden="true" /> Keluar
             </button>
@@ -1532,6 +2011,9 @@ export default function AdminDashboardPage() {
             {tab === 'exams' && <ExamsTab />}
             {tab === 'live' && <LiveMonitorTab />}
             {tab === 'blocked' && <BlockedTab />}
+            {tab === 'analytics' && <AnalyticsTab />}
+            {tab === 'gradebook' && <GradebookTab />}
+            {tab === 'import' && <ImportExportTab />}
           </main>
         </div>
       </div>

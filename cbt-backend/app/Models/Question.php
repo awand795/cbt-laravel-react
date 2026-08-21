@@ -7,13 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Question extends Model
-{
-    protected $fillable = [
-        'exam_id',
-        'type',
-        'question_text',
-        'media_url',
-        'score',
+{    protected $fillable = [
+        'exam_id', 'type', 'question_text', 'media_url', 'score', 'topic', 'difficulty', 'is_bank',
     ];
 
     public function exam(): BelongsTo

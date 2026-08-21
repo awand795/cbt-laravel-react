@@ -7,14 +7,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ExamSession extends Model
-{
-    protected $fillable = [
-        'exam_id',
-        'user_id',
-        'started_at',
-        'finished_at',
-        'status',
-        'cheat_count',
+{    protected $fillable = [
+        'exam_id', 'user_id', 'started_at', 'finished_at', 'status', 'cheat_count',
+        'attempt_number', 'time_extension_minutes',
     ];
 
     protected function casts(): array

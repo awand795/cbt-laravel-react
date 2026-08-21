@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\ExamSessionUpdated;
+use App\Models\AuditLog;
 use App\Models\Classroom;
 use App\Models\Exam;
 use App\Models\ExamSession;
@@ -462,6 +464,15 @@ class AdminController extends Controller
             ], 422);
         }
 
+        // Cek apakah kelas masih ditugaskan ke ujian manapun
+        if ($class->exams()->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kelas masih ditugaskan ke ujian. Hapus penetapan kelas dari ujian terlebih dahulu.',
+                'data' => null,
+            ], 422);
+        }
+
         $class->delete();
 
         return response()->json([
@@ -542,9 +553,60 @@ class AdminController extends Controller
 
         $session->update(['status' => 'ongoing']);
 
+        AuditLog::log('session.unblock', $session, ['reason' => $request->get('reason', '')]);
+
+        // Beri tahu Live Monitor admin secara real-time
+        ExamSessionUpdated::dispatch($session->fresh(), 'unblocked');
+
         return response()->json([
             'success' => true,
             'message' => 'Sesi berhasil dibuka kembali. Siswa dapat melanjutkan ujian.',
+            'data' => $this->sessionPayload($session->fresh('user:id,name')),
+        ]);
+    }
+
+    /* ============================================================
+       Time Extension
+       ============================================================ */
+
+    public function extendTime(Request $request, int $id): JsonResponse
+    {
+        $session = ExamSession::with('exam')->find($id);
+
+        if (! $session) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sesi ujian tidak ditemukan.',
+                'data' => null,
+            ], 404);
+        }
+
+        if ($session->status !== 'ongoing') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Hanya sesi ongoing yang bisa diberi tambahan waktu.',
+                'data' => null,
+            ], 422);
+        }
+
+        try {
+            $validated = $request->validate([
+                'minutes' => ['required', 'integer', 'min:1', 'max:120'],
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return $this->validationError($e);
+        }
+
+        $session->increment('time_extension_minutes', $validated['minutes']);
+
+        AuditLog::log('session.extend_time', $session, [
+            'minutes_added' => $validated['minutes'],
+            'total_extension' => $session->fresh()->time_extension_minutes,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Tambahan {$validated['minutes']} menit berhasil diberikan.",
             'data' => $this->sessionPayload($session->fresh('user:id,name')),
         ]);
     }
@@ -563,6 +625,10 @@ class AdminController extends Controller
             'start_time' => ['nullable', 'date'],
             'end_time' => ['nullable', 'date', 'after:start_time'],
             'status' => ['nullable', Rule::in(self::EXAM_STATUSES)],
+            'exam_pin' => ['nullable', 'string', 'max:10'],
+            'instructions' => ['nullable', 'string'],
+            'max_attempts' => ['nullable', 'integer', 'min:1', 'max:10'],
+            'allow_late_entry' => ['nullable', 'boolean'],
             'class_ids' => ['nullable', 'array'],
             'class_ids.*' => ['integer', 'exists:classes,id'],
         ]);
@@ -617,6 +683,10 @@ class AdminController extends Controller
             'start_time' => $exam->start_time?->toIso8601String(),
             'end_time' => $exam->end_time?->toIso8601String(),
             'status' => $exam->status,
+            'exam_pin' => $exam->exam_pin,
+            'instructions' => $exam->instructions,
+            'max_attempts' => $exam->max_attempts,
+            'allow_late_entry' => $exam->allow_late_entry,
             'class_ids' => $exam->classrooms->pluck('id')->all(),
             'class_names' => $exam->classrooms->pluck('name')->all(),
             'questions_count' => $exam->questions_count ?? $exam->questions()->count(),
@@ -635,6 +705,8 @@ class AdminController extends Controller
             'user_email' => $session->user?->email,
             'status' => $session->status,
             'cheat_count' => $session->cheat_count,
+            'attempt_number' => $session->attempt_number ?? 1,
+            'time_extension_minutes' => $session->time_extension_minutes ?? 0,
             'started_at' => $session->started_at?->toIso8601String(),
             'finished_at' => $session->finished_at?->toIso8601String(),
         ];

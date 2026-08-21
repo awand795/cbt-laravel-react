@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\ExamSessionUpdated;
+use App\Models\AuditLog;
 use App\Models\Exam;
 use App\Models\ExamAnswer;
 use App\Models\ExamSession;
@@ -40,19 +42,27 @@ class StudentExamController extends Controller
             ->orderBy('start_time')
             ->get();
 
-        // Muat sesi milik user untuk semua ujian sekaligus (hindari N+1)
-        $sessions = ExamSession::query()
+        // Muat SEMUA sesi milik user (termasuk yang sudah selesai) untuk ditampilkan
+        $allUserSessions = ExamSession::query()
             ->where('user_id', $user->id)
-            ->whereIn('exam_id', $exams->pluck('id'))
-            ->orderBy('id')
-            ->get()
+            ->with('exam:id,title')
+            ->orderByDesc('id')
+            ->get();
+
+        // Sesi aktif (ongoing/blocked) untuk ujian yang masih tampil
+        $activeSessions = $allUserSessions->whereIn('status', ['ongoing', 'blocked'])
             ->keyBy('exam_id');
+
+        // Sesi selesai yang ujiannya sudah tidak tampil (expired/closed)
+        $finishedOrphan = $allUserSessions->where('status', 'finished')
+            ->whereIn('exam_id', $exams->pluck('id')->negate())
+            ->take(10);
 
         return response()->json([
             'success' => true,
             'message' => 'Daftar ujian berhasil dimuat.',
-            'data' => $exams->map(function (Exam $exam) use ($sessions) {
-                $session = $sessions->get($exam->id);
+            'data' => $exams->map(function (Exam $exam) use ($activeSessions) {
+                $session = $activeSessions->get($exam->id);
 
                 return [
                     'id' => $exam->id,
@@ -70,7 +80,7 @@ class StudentExamController extends Controller
                         'cheat_count' => $session->cheat_count,
                     ] : null,
                 ];
-            }),
+            })->values(),
         ]);
     }
 
@@ -132,6 +142,21 @@ class StudentExamController extends Controller
             ], 422);
         }
 
+        // Cek percobaan yang sudah habis
+        $finishedCount = ExamSession::where('exam_id', $exam->id)
+            ->where('user_id', $user->id)
+            ->where('status', 'finished')
+            ->count();
+
+        $maxAttempts = $exam->max_attempts ?? 1;
+        if ($finishedCount >= $maxAttempts) {
+            return response()->json([
+                'success' => false,
+                'message' => "Anda sudah menggunakan semua percobaan ({$maxAttempts}x).",
+                'data' => null,
+            ], 422);
+        }
+
         // Cek sesi aktif milik user
         $session = ExamSession::query()
             ->where('exam_id', $exam->id)
@@ -139,6 +164,12 @@ class StudentExamController extends Controller
             ->whereIn('status', ['ongoing', 'blocked'])
             ->latest('id')
             ->first();
+
+        // Sesi blocked yang sudah melewati durasi → auto-finish
+        if ($session && $session->status === 'blocked' && $this->isExpired($session, $exam)) {
+            $this->finish($session);
+            $session = null;
+        }
 
         if ($session && $session->status === 'blocked') {
             return $this->blockedResponse();
@@ -157,8 +188,19 @@ class StudentExamController extends Controller
                 'started_at' => now(),
                 'status' => 'ongoing',
                 'cheat_count' => 0,
+                'attempt_number' => $finishedCount + 1,
+                'time_extension_minutes' => 0,
+            ]);
+
+            AuditLog::log('exam.start', $session, [
+                'attempt' => $finishedCount + 1,
             ]);
         }
+
+        // Beri tahu Live Monitor admin secara real-time
+        ExamSessionUpdated::dispatch($session, 'start');
+
+        $effectiveDuration = $exam->duration_minutes + ($session->time_extension_minutes ?? 0);
 
         return response()->json([
             'success' => true,
@@ -167,9 +209,12 @@ class StudentExamController extends Controller
                 'session_id' => $session->id,
                 'exam_id' => $exam->id,
                 'title' => $exam->title,
-                'duration_minutes' => $exam->duration_minutes,
+                'duration_minutes' => $effectiveDuration,
                 'started_at' => $session->started_at?->toIso8601String(),
                 'questions_count' => $exam->questions->count(),
+                'instructions' => $exam->instructions,
+                'attempt_number' => $session->attempt_number ?? 1,
+                'max_attempts' => $maxAttempts,
                 'status' => $session->status,
             ],
         ]);
@@ -196,6 +241,18 @@ class StudentExamController extends Controller
             ], 404);
         }
 
+        $exam = $session->exam;
+
+        // Sesi blocked yang sudah melewati durasi → auto-finish
+        if ($session->status === 'blocked' && $this->isExpired($session, $exam)) {
+            $this->finish($session);
+            return response()->json([
+                'success' => false,
+                'message' => 'Waktu ujian telah habis. Ujian otomatis dikumpulkan.',
+                'data' => null,
+            ], 403);
+        }
+
         if ($session->status === 'blocked') {
             return $this->blockedResponse();
         }
@@ -208,7 +265,6 @@ class StudentExamController extends Controller
             ], 403);
         }
 
-        $exam = $session->exam;
         if ($expired = $this->finishIfExpired($session, $exam)) {
             return $expired;
         }
@@ -222,9 +278,13 @@ class StudentExamController extends Controller
         }
 
         $answers = $session->answers->keyBy('question_id');
+
+        // Gunakan seed berbasis session_id agar urutan soal & opsi konsisten
+        // (tidak berubah saat siswa refresh halaman)
+        $sessionSeed = $session->id * 1000;
         $questions = $exam->questions
-            ->shuffle()
-            ->map(function (Question $question) use ($answers) {
+            ->shuffle($sessionSeed)
+            ->map(function (Question $question) use ($answers, $sessionSeed) {
                 $saved = $answers->get($question->id);
 
                 return [
@@ -232,7 +292,7 @@ class StudentExamController extends Controller
                     'type' => $question->type,
                     'question_text' => $question->question_text,
                     'media_url' => $question->media_url,
-                    'options' => $question->options->shuffle()->map(fn (Option $option) => [
+                    'options' => $question->options->shuffle($sessionSeed + $question->id)->map(fn (Option $option) => [
                         'id' => $option->id,
                         'option_text' => $option->option_text,
                     ])->values(),
@@ -242,6 +302,8 @@ class StudentExamController extends Controller
             })
             ->values();
 
+        $effectiveDuration = $exam->duration_minutes + ($session->time_extension_minutes ?? 0);
+
         return response()->json([
             'success' => true,
             'message' => 'Soal ujian berhasil dimuat.',
@@ -249,8 +311,10 @@ class StudentExamController extends Controller
                 'session_id' => $session->id,
                 'exam_id' => $exam->id,
                 'title' => $exam->title,
-                'duration_minutes' => $exam->duration_minutes,
+                'instructions' => $exam->instructions,
+                'duration_minutes' => $effectiveDuration,
                 'remaining_seconds' => $this->remainingSeconds($session, $exam),
+                'attempt_number' => $session->attempt_number ?? 1,
                 'questions' => $questions,
             ],
         ]);
@@ -379,6 +443,11 @@ class StudentExamController extends Controller
             ],
         );
 
+        AuditLog::log('exam.answer', $session, [
+            'question_id' => $question->id,
+            'type' => $question->type,
+        ]);
+
         // Catatan keamanan: `is_correct` TIDAK dikembalikan ke siswa agar
         // kunci jawaban tidak bisa dibocorkan lewat probing endpoint ini.
         return response()->json([
@@ -488,6 +557,13 @@ class StudentExamController extends Controller
 
         $session->increment('cheat_count', 1, ['status' => 'blocked']);
 
+        AuditLog::log('exam.block', $session, [
+            'cheat_count' => $session->fresh()->cheat_count,
+        ]);
+
+        // Beri tahu Live Monitor admin secara real-time
+        ExamSessionUpdated::dispatch($session->fresh(), 'blocked');
+
         return response()->json([
             'success' => true,
             'message' => 'Pelanggaran terdeteksi. Ujian dibekukan, hubungi pengawas.',
@@ -516,7 +592,9 @@ class StudentExamController extends Controller
             return false;
         }
 
-        return $session->started_at->copy()->addMinutes($exam->duration_minutes)->isPast();
+        $effectiveMinutes = $exam->duration_minutes + ($session->time_extension_minutes ?? 0);
+
+        return $session->started_at->copy()->addMinutes($effectiveMinutes)->isPast();
     }
 
     private function finishIfExpired(ExamSession $session, Exam $exam, string $message = 'Waktu ujian telah habis.'): ?JsonResponse
@@ -540,7 +618,8 @@ class StudentExamController extends Controller
             return $exam->duration_minutes * 60;
         }
 
-        $deadline = $session->started_at->copy()->addMinutes($exam->duration_minutes);
+        $effectiveMinutes = $exam->duration_minutes + ($session->time_extension_minutes ?? 0);
+        $deadline = $session->started_at->copy()->addMinutes($effectiveMinutes);
 
         return max(0, (int) now()->diffInSeconds($deadline, false));
     }
@@ -551,5 +630,8 @@ class StudentExamController extends Controller
             'status' => 'finished',
             'finished_at' => now(),
         ]);
+
+        // Beri tahu Live Monitor admin secara real-time
+        ExamSessionUpdated::dispatch($session->fresh(), 'finished');
     }
 }

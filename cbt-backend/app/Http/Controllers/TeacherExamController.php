@@ -177,6 +177,8 @@ class TeacherExamController extends Controller
                 'question_text' => ['required', 'string'],
                 'media_url' => ['nullable', 'string', 'max:255'],
                 'score' => ['nullable', 'integer', 'min:1', 'max:1000'],
+                'topic' => ['nullable', 'string', 'max:255'],
+                'difficulty' => ['nullable', 'in:easy,medium,hard'],
                 'options' => ['nullable', 'array', 'min:2', 'max:10'],
                 'options.*.option_text' => ['required_with:options', 'string', 'max:255'],
                 'options.*.is_correct' => ['nullable', 'boolean'],
@@ -203,6 +205,8 @@ class TeacherExamController extends Controller
             'question_text' => $validated['question_text'],
             'media_url' => $validated['media_url'] ?? null,
             'score' => $validated['score'] ?? 1,
+            'topic' => $validated['topic'] ?? null,
+            'difficulty' => $validated['difficulty'] ?? 'medium',
         ]);
 
         foreach ($validated['options'] ?? [] as $opt) {
@@ -242,6 +246,8 @@ class TeacherExamController extends Controller
                 'question_text' => ['required', 'string'],
                 'media_url' => ['nullable', 'string', 'max:255'],
                 'score' => ['nullable', 'integer', 'min:1', 'max:1000'],
+                'topic' => ['nullable', 'string', 'max:255'],
+                'difficulty' => ['nullable', 'in:easy,medium,hard'],
                 'options' => ['nullable', 'array', 'min:2', 'max:10'],
                 'options.*.option_text' => ['required_with:options', 'string', 'max:255'],
                 'options.*.is_correct' => ['nullable', 'boolean'],
@@ -263,6 +269,8 @@ class TeacherExamController extends Controller
             'question_text' => $validated['question_text'],
             'media_url' => $validated['media_url'] ?? null,
             'score' => $validated['score'] ?? $question->score ?? 1,
+            'topic' => $validated['topic'] ?? $question->topic,
+            'difficulty' => $validated['difficulty'] ?? $question->difficulty,
         ]);
 
         // Ganti seluruh opsi lama dengan opsi baru (cara paling sederhana & aman)
@@ -336,17 +344,18 @@ class TeacherExamController extends Controller
         $pgTotalWeight = (int) $pgQuestions->sum('score');
         $essayTotalWeight = (int) $essayQuestions->sum('score');
         $weightById = $questions->pluck('score', 'id');
+        $pgQuestionIdList = $pgQuestions->pluck('id')->all();
 
-        $data = $sessions->map(function (ExamSession $s) use ($weightById, $pgTotalWeight, $essayTotalWeight) {
+        $data = $sessions->map(function (ExamSession $s) use ($weightById, $pgTotalWeight, $essayTotalWeight, $pgQuestionIdList) {
             $answers = $s->answers()->get();
 
             // Bobot PG yang dijawab benar (diisi otomatis saat siswa menjawab)
             $pgCorrectWeight = (int) $answers
                 ->where('is_correct', true)
-                ->whereIn('question_id', $this->pgQuestionIds($s))
+                ->whereIn('question_id', $pgQuestionIdList)
                 ->sum(fn ($a) => (int) ($weightById[$a->question_id] ?? 1));
-            $pgCorrect = $answers->where('is_correct', true)->whereIn('question_id', $this->pgQuestionIds($s))->count();
-            $pgTotal = $this->pgQuestionIds($s) ? count($this->pgQuestionIds($s)) : 0;
+            $pgCorrect = $answers->where('is_correct', true)->whereIn('question_id', $pgQuestionIdList)->count();
+            $pgTotal = count($pgQuestionIdList);
 
             // Bobot essay yang sudah dinilai guru (benar vs total dinilai)
             $essayAnswers = $answers->whereNotNull('essay_text');
@@ -524,6 +533,10 @@ class TeacherExamController extends Controller
             'start_time' => ['nullable', 'date'],
             'end_time' => ['nullable', 'date', 'after:start_time'],
             'status' => ['nullable', Rule::in(['draft', 'published', 'closed'])],
+            'exam_pin' => ['nullable', 'string', 'max:10'],
+            'instructions' => ['nullable', 'string'],
+            'max_attempts' => ['nullable', 'integer', 'min:1', 'max:10'],
+            'allow_late_entry' => ['nullable', 'boolean'],
             'class_ids' => ['nullable', 'array'],
             'class_ids.*' => ['integer', 'exists:classes,id'],
         ]);
@@ -542,6 +555,10 @@ class TeacherExamController extends Controller
             'start_time' => $exam->start_time?->toIso8601String(),
             'end_time' => $exam->end_time?->toIso8601String(),
             'status' => $exam->status,
+            'exam_pin' => $exam->exam_pin,
+            'instructions' => $exam->instructions,
+            'max_attempts' => $exam->max_attempts,
+            'allow_late_entry' => $exam->allow_late_entry,
             'class_ids' => $exam->classrooms->pluck('id')->all(),
             'class_names' => $exam->classrooms->pluck('name')->all(),
             'questions_count' => $exam->questions_count ?? $exam->questions()->count(),
@@ -557,6 +574,8 @@ class TeacherExamController extends Controller
             'question_text' => $question->question_text,
             'media_url' => $question->media_url,
             'score' => $question->score,
+            'topic' => $question->topic,
+            'difficulty' => $question->difficulty,
             'options' => $question->options->map(fn (Option $o) => [
                 'id' => $o->id,
                 'option_text' => $o->option_text,

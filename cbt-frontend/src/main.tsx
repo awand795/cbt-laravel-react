@@ -14,9 +14,21 @@ import DashboardPage from './DashboardPage'
 import ExamRoomPage from './ExamRoomPage'
 import AdminDashboardPage from './AdminDashboardPage'
 import TeacherDashboardPage from './TeacherDashboardPage'
+import StudentProfilePage from './StudentProfilePage'
+import StudentHistoryPage from './StudentHistoryPage'
 import { useAuthStore } from './store/authStore'
+import { useThemeStore, applyTheme } from './store/themeStore'
 import { redirectIfAuthed, requireAdmin, requireStudent, requireTeacher } from './router/guards'
 import './index.css'
+
+// Apply theme on load
+const initialTheme = useThemeStore.getState().theme;
+applyTheme(initialTheme);
+
+// Subscribe to theme changes
+useThemeStore.subscribe((state) => {
+  applyTheme(state.theme);
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -74,6 +86,20 @@ const teacherRoute = createRoute({
   beforeLoad: requireTeacher,
 })
 
+const studentProfileRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/student/profile',
+  component: StudentProfilePage,
+  beforeLoad: requireStudent,
+})
+
+const studentHistoryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/student/history',
+  component: StudentHistoryPage,
+  beforeLoad: requireStudent,
+})
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -81,6 +107,8 @@ const routeTree = rootRoute.addChildren([
   examRoomRoute,
   adminRoute,
   teacherRoute,
+  studentProfileRoute,
+  studentHistoryRoute,
 ])
 
 const router = createRouter({ routeTree })

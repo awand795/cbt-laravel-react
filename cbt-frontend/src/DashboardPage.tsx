@@ -104,6 +104,20 @@ export default function DashboardPage() {
           </Link>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            <Link
+              to="/student/profile"
+              className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition-all duration-300 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 sm:inline-flex"
+            >
+              <FaUserGraduate className="text-xs" aria-hidden="true" />
+              Profil
+            </Link>
+            <Link
+              to="/student/history"
+              className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition-all duration-300 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 sm:inline-flex"
+            >
+              <FaCalendarAlt className="text-xs" aria-hidden="true" />
+              Riwayat
+            </Link>
             <span className="hidden items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-700 sm:inline-flex">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping-slow rounded-full bg-indigo-400" />

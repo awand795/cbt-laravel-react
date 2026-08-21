@@ -25,11 +25,16 @@ import {
   FaGraduationCap,
 } from 'react-icons/fa';
 import {
+  addQuestionBankToExam,
   createQuestion,
+  createQuestionBankItem,
   createTeacherExam,
   deleteQuestion,
+  deleteQuestionBankItem,
   deleteTeacherExam,
   fetchQuestionBank,
+  fetchQuestionBankList,
+  fetchQuestionBankStats,
   fetchResults,
   fetchSessionDetail,
   fetchTeacherClasses,
@@ -37,19 +42,23 @@ import {
   fetchTeacherSubjects,
   gradeEssayRequest,
   updateQuestion,
+  updateQuestionBankItem,
   updateTeacherExam,
   type AdminExam,
   type GradedAnswer,
+  type QuestionBankItem,
   type TeacherQuestion,
 } from './api/client';
 import { useAuthStore } from './store/authStore';
+import { useThemeStore } from './store/themeStore';
 
-type Tab = 'overview' | 'exams' | 'questions' | 'results';
+type Tab = 'overview' | 'exams' | 'questions' | 'results' | 'globalBank';
 
 const TABS: { id: Tab; label: string; icon: typeof FaClipboardList }[] = [
   { id: 'overview', label: 'Ringkasan', icon: FaChalkboardTeacher },
   { id: 'exams', label: 'Ujian Saya', icon: FaClipboardList },
   { id: 'questions', label: 'Bank Soal', icon: FaListOl },
+  { id: 'globalBank', label: 'Bank Global', icon: FaDatabase },
   { id: 'results', label: 'Hasil & Penilaian', icon: FaTrophy },
 ];
 
@@ -1193,6 +1202,286 @@ function EssayQuestion({
   );
 }
 
+/* ============ Global Question Bank Tab ============ */
+
+function GlobalBankTab() {
+  const queryClient = useQueryClient();
+  const [subjectFilter, setSubjectFilter] = useState<number | null>(null);
+  const [typeFilter, setTypeFilter] = useState<string>('');
+  const [search, setSearch] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<QuestionBankItem | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    subject_id: '',
+    type: 'pg' as 'pg' | 'essay',
+    question_text: '',
+    media_url: '',
+    score: '1',
+    topic: '',
+    difficulty: 'medium',
+    options: [
+      { option_text: '', is_correct: false },
+      { option_text: '', is_correct: false },
+      { option_text: '', is_correct: false },
+      { option_text: '', is_correct: false },
+    ],
+  });
+  const [addToExamModal, setAddToExamModal] = useState<number | null>(null);
+
+  const { data: subjects } = useQuery({ queryKey: ['teacher-subjects'], queryFn: fetchTeacherSubjects });
+  const { data: exams } = useQuery({ queryKey: ['teacher-exams'], queryFn: fetchTeacherExams });
+  const { data: bankData, isLoading } = useQuery({
+    queryKey: ['question-bank', subjectFilter, typeFilter, search],
+    queryFn: () => fetchQuestionBankList({
+      subject_id: subjectFilter ?? undefined,
+      type: typeFilter || undefined,
+      search: search || undefined,
+    }),
+  });
+  const { data: stats } = useQuery({ queryKey: ['question-bank-stats'], queryFn: fetchQuestionBankStats });
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const payload = {
+        subject_id: Number(form.subject_id),
+        type: form.type,
+        question_text: form.question_text,
+        media_url: form.media_url || null,
+        score: Number(form.score) || 1,
+        topic: form.topic || null,
+        difficulty: form.difficulty,
+        options: form.type === 'pg' ? form.options.filter((o) => o.option_text.trim()) : undefined,
+      };
+      return editing ? updateQuestionBankItem(editing.id, payload) : createQuestionBankItem(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['question-bank'] });
+      setCreating(false);
+      setEditing(null);
+      setError(null);
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
+      setError(msg || 'Gagal menyimpan soal.');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteQuestionBankItem,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['question-bank'] }),
+  });
+
+  const addToExamMutation = useMutation({
+    mutationFn: ({ bankId, examId }: { bankId: number; examId: number }) => addQuestionBankToExam(bankId, examId),
+    onSuccess: () => {
+      setAddToExamModal(null);
+      alert('Soal berhasil ditambahkan ke ujian!');
+    },
+  });
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm({
+      subject_id: subjects?.[0] ? String(subjects[0].id) : '',
+      type: 'pg', question_text: '', media_url: '', score: '1', topic: '', difficulty: 'medium',
+      options: [
+        { option_text: '', is_correct: false },
+        { option_text: '', is_correct: false },
+        { option_text: '', is_correct: false },
+        { option_text: '', is_correct: false },
+      ],
+    });
+    setError(null);
+    setCreating(true);
+  };
+
+  return (
+    <div className="space-y-5">
+      {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3 text-sm font-medium text-rose-700">{error}</div>}
+
+      {/* Stats */}
+      {stats && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-bold uppercase text-slate-400">Total Soal</p>
+            <p className="mt-1 font-mono text-2xl font-bold text-slate-900">{stats.total}</p>
+          </div>
+          {Object.entries(stats.by_type).map(([type, count]) => (
+            <div key={type} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-bold uppercase text-slate-400">{type === 'pg' ? 'Pilihan Ganda' : 'Essay'}</p>
+              <p className="mt-1 font-mono text-2xl font-bold text-slate-900">{count}</p>
+            </div>
+          ))}
+          {Object.entries(stats.by_difficulty).map(([diff, count]) => (
+            <div key={diff} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-bold uppercase text-slate-400">{diff}</p>
+              <p className="mt-1 font-mono text-2xl font-bold text-slate-900">{count}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Filters & Create */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-2">
+          <input
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-indigo-400"
+            placeholder="Cari soal…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <select className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none" value={subjectFilter ?? ''} onChange={(e) => setSubjectFilter(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">Semua Mapel</option>
+            {subjects?.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <select className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+            <option value="">Semua Tipe</option>
+            <option value="pg">PG</option>
+            <option value="essay">Essay</option>
+          </select>
+        </div>
+        <button type="button" onClick={openCreate} className={primaryBtnCls}><FaPlus /> Tambah Soal</button>
+      </div>
+
+      {/* List */}
+      {isLoading ? (
+        <div className="flex justify-center py-10"><FaSpinner className="animate-spin text-3xl text-indigo-500" /></div>
+      ) : (
+        <div className="space-y-3">
+          {bankData?.data?.map((q) => (
+            <div key={q.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                    <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-100">{q.type.toUpperCase()}</span>
+                    <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold text-slate-600">{q.difficulty}</span>
+                    {q.topic && <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">{q.topic}</span>}
+                    <span className="text-[10px] font-bold text-slate-400">Bobot: {q.score}</span>
+                  </div>
+                  <p className="text-sm font-bold text-slate-800 line-clamp-2">{q.question_text}</p>
+                  {q.type === 'pg' && q.options.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {q.options.map((o) => (
+                        <span key={o.id} className={`rounded-lg px-2 py-0.5 text-[10px] font-bold ${o.is_correct ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{o.option_text}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 gap-1.5">
+                  <select
+                    className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600 outline-none"
+                    value={addToExamModal === q.id ? '' : ''}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        addToExamMutation.mutate({ bankId: q.id, examId: Number(e.target.value) });
+                      }
+                    }}
+                  >
+                    <option value="">+ Ke Ujian</option>
+                    {exams?.map((ex) => <option key={ex.id} value={ex.id}>{ex.title}</option>)}
+                  </select>
+                  <button type="button" onClick={() => {
+                    setEditing(q);
+                    setForm({
+                      subject_id: String(q.subject_id), type: q.type, question_text: q.question_text,
+                      media_url: q.media_url ?? '', score: String(q.score), topic: q.topic ?? '', difficulty: q.difficulty,
+                      options: q.options.length >= 2 ? q.options.map((o) => ({ option_text: o.option_text, is_correct: o.is_correct })) : [
+                        { option_text: '', is_correct: false }, { option_text: '', is_correct: false },
+                        { option_text: '', is_correct: false }, { option_text: '', is_correct: false },
+                      ],
+                    });
+                    setCreating(true);
+                  }} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-50"><FaEdit /></button>
+                  <button type="button" onClick={() => { if (window.confirm('Hapus soal ini?')) deleteMutation.mutate(q.id); }} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-50"><FaTrash /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {bankData?.data?.length === 0 && (
+            <p className="py-10 text-center text-sm font-medium text-slate-400">Belum ada soal di bank global.</p>
+          )}
+        </div>
+      )}
+
+      {/* Create/Edit Modal */}
+      {creating && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 px-4 py-10 backdrop-blur-sm" onClick={() => setCreating(false)}>
+          <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-7 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between">
+              <h3 className="text-xl font-extrabold text-slate-900">{editing ? 'Edit Soal Bank' : 'Tambah Soal Bank'}</h3>
+              <button type="button" onClick={() => setCreating(false)} className="text-slate-400 hover:text-rose-500"><FaTimes /></button>
+            </div>
+            <form className="mt-6 space-y-4" onSubmit={(e) => { e.preventDefault(); saveMutation.mutate(); }}>
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-slate-700">Mapel</label>
+                <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-bold" value={form.subject_id} onChange={(e) => setForm({ ...form, subject_id: e.target.value })} required>
+                  <option value="">Pilih Mapel</option>
+                  {subjects?.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="mb-1 block text-sm font-semibold text-slate-700">Tipe</label>
+                  <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-bold" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as 'pg' | 'essay' })}>
+                    <option value="pg">PG</option>
+                    <option value="essay">Essay</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-semibold text-slate-700">Bobot</label>
+                  <input type="number" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-bold" value={form.score} onChange={(e) => setForm({ ...form, score: e.target.value })} min={1} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-semibold text-slate-700">Kesulitan</label>
+                  <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-bold" value={form.difficulty} onChange={(e) => setForm({ ...form, difficulty: e.target.value })}>
+                    <option value="easy">Mudah</option>
+                    <option value="medium">Sedang</option>
+                    <option value="hard">Sulit</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-slate-700">Topik (opsional)</label>
+                <input className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-bold" value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="cth: Bab 1 - Penjumlahan" />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-slate-700">Soal</label>
+                <textarea className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-bold" rows={3} value={form.question_text} onChange={(e) => setForm({ ...form, question_text: e.target.value })} required />
+              </div>
+              {form.type === 'pg' && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-semibold text-slate-700">Opsi Jawaban</label>
+                  {form.options.map((opt, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input type="radio" name="correct" checked={opt.is_correct} onChange={() => {
+                        const newOpts = form.options.map((o, j) => ({ ...o, is_correct: j === i }));
+                        setForm({ ...form, options: newOpts });
+                      }} className="accent-emerald-500" title="Jawaban benar" />
+                      <input className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm" value={opt.option_text} onChange={(e) => {
+                        const newOpts = [...form.options];
+                        newOpts[i] = { ...newOpts[i], option_text: e.target.value };
+                        setForm({ ...form, options: newOpts });
+                      }} placeholder={`Opsi ${String.fromCharCode(65 + i)}`} />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setCreating(false)} className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-600">Batal</button>
+                <button type="submit" disabled={saveMutation.isPending} className={primaryBtnCls}>
+                  {saveMutation.isPending ? <FaSpinner className="animate-spin" /> : <FaCheckCircle />}
+                  {editing ? 'Simpan' : 'Tambah'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ============ Page shell ============ */
 
 export default function TeacherDashboardPage() {
@@ -1200,6 +1489,7 @@ export default function TeacherDashboardPage() {
   const user = useAuthStore((s) => s.user);
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const [tab, setTab] = useState<Tab>('overview');
+  const { theme, toggleTheme } = useThemeStore();
 
   const handleLogout = async () => {
     clearAuth();
@@ -1251,8 +1541,15 @@ export default function TeacherDashboardPage() {
             </div>
             <button
               type="button"
+              onClick={toggleTheme}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition-all duration-300 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+            >
+              {theme === 'dark' ? '☀️' : '🌙'} {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            </button>
+            <button
+              type="button"
               onClick={handleLogout}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition-all duration-300 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition-all duration-300 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
             >
               <FaSignOutAlt className="text-xs" aria-hidden="true" /> Keluar
             </button>
@@ -1317,6 +1614,7 @@ export default function TeacherDashboardPage() {
             {tab === 'overview' && <Overview goTo={setTab} />}
             {tab === 'exams' && <ExamsTab />}
             {tab === 'questions' && <QuestionsTab />}
+            {tab === 'globalBank' && <GlobalBankTab />}
             {tab === 'results' && <ResultsTab />}
           </main>
         </div>

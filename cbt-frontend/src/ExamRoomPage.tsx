@@ -503,6 +503,16 @@ export default function ExamRoomPage() {
             {session.questions.length} soal · {session.duration_minutes} menit
           </p>
 
+          {/* Instructions */}
+          {(session as Record<string, unknown>).instructions && (
+            <div className="relative mt-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-left">
+              <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Instruksi Ujian</p>
+              <p className="mt-1.5 text-sm leading-relaxed text-indigo-800">
+                {(session as Record<string, unknown>).instructions as string}
+              </p>
+            </div>
+          )}
+
           <div className="relative mt-6 space-y-3 rounded-2xl bg-slate-50 p-5 text-left ring-1 ring-slate-100">
             <p className="flex items-center gap-2.5 text-sm font-bold text-slate-800">
               <FaExpand className="text-indigo-500" aria-hidden="true" />
@@ -516,6 +526,11 @@ export default function ExamRoomPage() {
               <FaFlag className="mt-0.5 text-amber-500" aria-hidden="true" />
               Gunakan tombol ragu-ragu pada soal yang belum yakin.
             </p>
+            {(session as Record<string, unknown>).attempt_number && (
+              <p className="text-xs font-semibold text-slate-400">
+                Percobaan {(session as Record<string, unknown>).attempt_number as number} dari {(session as Record<string, unknown>).max_attempts as number}
+              </p>
+            )}
           </div>
 
           <button

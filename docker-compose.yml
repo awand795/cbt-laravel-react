@@ -30,6 +30,14 @@ services:
       - DB_DATABASE=cbt_db
       - DB_USERNAME=postgres
       - DB_PASSWORD=password
+      # Real-time broadcasting via Reverb (WebSocket)
+      - BROADCAST_CONNECTION=reverb
+      - REVERB_APP_ID=cbt-reverb
+      - REVERB_APP_KEY=cbt-reverb-key
+      - REVERB_APP_SECRET=cbt-reverb-secret
+      - REVERB_HOST=reverb
+      - REVERB_PORT=8080
+      - REVERB_SCHEME=http
     depends_on:
       - db
     networks:
@@ -48,6 +56,9 @@ services:
       - "5173:5173"
     environment:
       - VITE_API_URL=http://localhost:8000/api
+      - VITE_REVERB_APP_KEY=cbt-reverb-key
+      - VITE_REVERB_HOST=localhost
+      - VITE_REVERB_PORT=8080
     depends_on:
       - backend
     networks:
@@ -55,6 +66,35 @@ services:
     volumes:
       - ./cbt-frontend:/app
       - /app/node_modules
+
+  reverb:
+    build:
+      context: ./cbt-backend
+      dockerfile: Dockerfile
+    container_name: cbt_reverb
+    restart: unless-stopped
+    command: ["php", "artisan", "reverb:start"]
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_ENV=local
+      - REVERB_SERVER_HOST=0.0.0.0
+      - REVERB_SERVER_PORT=8080
+      - REVERB_HOST=reverb
+      - REVERB_PORT=8080
+      - REVERB_SCHEME=http
+      - REVERB_APP_ID=cbt-reverb
+      - REVERB_APP_KEY=cbt-reverb-key
+      - REVERB_APP_SECRET=cbt-reverb-secret
+      # Reverb membandingkan Origin hanya dari bagian HOST (tanpa skema/port)
+      - REVERB_ALLOWED_ORIGINS=localhost,127.0.0.1
+    depends_on:
+      - backend
+    networks:
+      - cbt_network
+    volumes:
+      - ./cbt-backend:/var/www
+      - /var/www/vendor
 
 networks:
   cbt_network:

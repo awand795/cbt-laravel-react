@@ -524,3 +524,297 @@ export async function gradeEssayRequest(
   );
   return data.data;
 }
+
+/* ============================================================
+   Student Profile & Exam History
+   ============================================================ */
+
+export interface StudentProfile {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  class_id: number | null;
+  class_name: string | null;
+  created_at: string | null;
+}
+
+export interface ExamHistorySummary {
+  total_exams: number;
+  average_score: number | null;
+  best_score: number | null;
+  total_cheats: number;
+}
+
+export interface ExamHistoryItem {
+  session_id: number;
+  exam_id: number;
+  exam_title: string;
+  subject: string | null;
+  duration_minutes: number;
+  score: number | null;
+  pg_correct: number;
+  pg_total: number;
+  essay_answered: number;
+  essay_graded: number;
+  total_questions: number;
+  cheat_count: number;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_taken: number | null;
+}
+
+export interface ExamHistoryData {
+  summary: ExamHistorySummary;
+  history: ExamHistoryItem[];
+}
+
+export async function fetchStudentProfile(): Promise<StudentProfile> {
+  const { data } = await api.get<ApiResponse<StudentProfile>>('/student/profile');
+  return data.data;
+}
+
+export async function updateStudentProfile(payload: {
+  name?: string;
+  email?: string;
+  current_password?: string;
+  password?: string;
+  password_confirmation?: string;
+}): Promise<StudentProfile> {
+  const { data } = await api.put<ApiResponse<StudentProfile>>('/student/profile', payload);
+  return data.data;
+}
+
+export async function fetchExamHistory(): Promise<ExamHistoryData> {
+  const { data } = await api.get<ApiResponse<ExamHistoryData>>('/student/exam-history');
+  return data.data;
+}
+
+export async function fetchExamHistoryDetail(sessionId: number): Promise<unknown> {
+  const { data } = await api.get<ApiResponse<unknown>>(`/student/exam-history/${sessionId}`);
+  return data.data;
+}
+
+/* ============================================================
+   Question Bank (Reusable)
+   ============================================================ */
+
+export interface QuestionBankItem {
+  id: number;
+  subject_id: number;
+  subject: string | null;
+  type: 'pg' | 'essay';
+  question_text: string;
+  media_url: string | null;
+  score: number;
+  topic: string | null;
+  difficulty: 'easy' | 'medium' | 'hard';
+  options: { id: number; option_text: string; is_correct: boolean }[];
+  options_count: number;
+}
+
+export interface QuestionBankStats {
+  total: number;
+  by_subject: Record<string, number>;
+  by_type: Record<string, number>;
+  by_difficulty: Record<string, number>;
+  topics: { topic: string; count: number }[];
+}
+
+export interface QuestionBankPayload {
+  subject_id: number;
+  type: 'pg' | 'essay';
+  question_text: string;
+  media_url?: string | null;
+  score?: number;
+  topic?: string | null;
+  difficulty?: string;
+  options?: { option_text: string; is_correct: boolean }[];
+}
+
+export async function fetchQuestionBankList(params?: {
+  subject_id?: number;
+  type?: string;
+  difficulty?: string;
+  search?: string;
+  page?: number;
+}): Promise<{ data: QuestionBankItem[]; current_page: number; last_page: number; total: number }> {
+  const { data } = await api.get<ApiResponse<{ data: QuestionBankItem[]; current_page: number; last_page: number; total: number }>>(
+    '/teacher/question-bank', { params },
+  );
+  return data.data;
+}
+
+export async function createQuestionBankItem(payload: QuestionBankPayload): Promise<QuestionBankItem> {
+  const { data } = await api.post<ApiResponse<QuestionBankItem>>('/teacher/question-bank', payload);
+  return data.data;
+}
+
+export async function updateQuestionBankItem(id: number, payload: QuestionBankPayload): Promise<QuestionBankItem> {
+  const { data } = await api.put<ApiResponse<QuestionBankItem>>(`/teacher/question-bank/${id}`, payload);
+  return data.data;
+}
+
+export async function deleteQuestionBankItem(id: number): Promise<void> {
+  await api.delete(`/teacher/question-bank/${id}`);
+}
+
+export async function addQuestionBankToExam(bankId: number, examId: number): Promise<{ question_id: number; exam_id: number }> {
+  const { data } = await api.post<ApiResponse<{ question_id: number; exam_id: number }>>(
+    `/teacher/question-bank/${bankId}/add-to-exam/${examId}`,
+  );
+  return data.data;
+}
+
+export async function fetchQuestionBankStats(): Promise<QuestionBankStats> {
+  const { data } = await api.get<ApiResponse<QuestionBankStats>>('/teacher/question-bank/stats');
+  return data.data;
+}
+
+/* ============================================================
+   Admin: Time Extension
+   ============================================================ */
+
+export async function extendSessionTime(sessionId: number, minutes: number): Promise<SessionRecord> {
+  const { data } = await api.post<ApiResponse<SessionRecord>>(
+    `/admin/exam-sessions/${sessionId}/extend-time`, { minutes },
+  );
+  return data.data;
+}
+
+/* ============================================================
+   Admin: Import/Export
+   ============================================================ */
+
+export async function importStudentsCsv(file: File): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await api.post<ApiResponse<{ imported: number; skipped: number; errors: string[] }>>(
+    '/admin/import/students',
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return data.data;
+}
+
+export async function importQuestionsCsv(file: File, examId: number): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('exam_id', String(examId));
+  const { data } = await api.post<ApiResponse<{ imported: number; skipped: number; errors: string[] }>>(
+    '/admin/import/questions',
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return data.data;
+}
+
+export function getExportUrl(type: 'students' | 'questions' | 'results', examId?: number): string {
+  const base = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api';
+  const token = useAuthStore.getState().token;
+  const auth = token ? `?token=${token}` : '';
+
+  switch (type) {
+    case 'students':
+      return `${base}/admin/export/students${auth}`;
+    case 'questions':
+      return `${base}/admin/export/exams/${examId}/questions${auth}`;
+    case 'results':
+      return `${base}/admin/export/exams/${examId}/results${auth}`;
+  }
+}
+
+export function getTemplateUrl(type: 'students' | 'questions'): string {
+  const base = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api';
+  return `${base}/admin/template/${type}`;
+}
+
+/* ============================================================
+   Admin: Analytics
+   ============================================================ */
+
+export interface AnalyticsOverview {
+  total_exams: number;
+  total_sessions: number;
+  finished_sessions: number;
+  average_score: number | null;
+  score_distribution: Record<string, number>;
+  exams_per_subject: Record<string, number>;
+  activity_last_30_days: { date: string; count: number }[];
+}
+
+export interface ExamAnalyticsData {
+  exam: { id: number; title: string; subject: string | null; questions_count: number };
+  summary: {
+    total_participants: number;
+    average_score: number | null;
+    median_score: number | null;
+    highest_score: number | null;
+    lowest_score: number | null;
+    average_time_minutes: number | null;
+    total_cheats: number;
+  };
+  score_distribution: Record<string, number>;
+  question_analysis: {
+    question_id: number;
+    type: string;
+    question_text: string;
+    total_answers: number;
+    wrong_count: number;
+    difficulty_index: number | null;
+    answer_distribution: Record<number, number>;
+  }[];
+}
+
+export async function fetchAnalyticsOverview(): Promise<AnalyticsOverview> {
+  const { data } = await api.get<ApiResponse<AnalyticsOverview>>('/admin/analytics/overview');
+  return data.data;
+}
+
+export async function fetchExamAnalytics(examId: number): Promise<ExamAnalyticsData> {
+  const { data } = await api.get<ApiResponse<ExamAnalyticsData>>(`/admin/analytics/exam/${examId}`);
+  return data.data;
+}
+
+export async function fetchClassAnalytics(classId: number): Promise<unknown> {
+  const { data } = await api.get<ApiResponse<unknown>>(`/admin/analytics/class/${classId}`);
+  return data.data;
+}
+
+export async function fetchSubjectAnalytics(subjectId: number): Promise<unknown> {
+  const { data } = await api.get<ApiResponse<unknown>>(`/admin/analytics/subject/${subjectId}`);
+  return data.data;
+}
+
+/* ============================================================
+   Admin: Gradebook
+   ============================================================ */
+
+export interface GradebookClass {
+  class_id: number;
+  class_name: string;
+  students_count: number;
+  class_average: number | null;
+  exams: { id: number; title: string; subject: string | null }[];
+  students: {
+    user_id: number;
+    name: string;
+    email: string;
+    grades: { exam_id: number; score: number | null; status: string }[];
+    average_score: number | null;
+    exams_taken: number;
+  }[];
+}
+
+export async function fetchGradebook(classId?: number): Promise<GradebookClass[]> {
+  const { data } = await api.get<ApiResponse<GradebookClass[]>>('/admin/gradebook', {
+    params: classId ? { class_id: classId } : undefined,
+  });
+  return data.data;
+}
+
+export function getGradebookExportUrl(classId?: number): string {
+  const base = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api';
+  const params = classId ? `?class_id=${classId}` : '';
+  return `${base}/admin/gradebook/export${params}`;
+}

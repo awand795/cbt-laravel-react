@@ -8,16 +8,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Exam extends Model
-{
-    protected $fillable = [
-        'subject_id',
-        'created_by',
-        'title',
-        'description',
-        'duration_minutes',
-        'start_time',
-        'end_time',
-        'status',
+{    protected $fillable = [
+        'subject_id', 'created_by', 'title', 'description', 'duration_minutes', 'start_time', 'end_time', 'status',
+        'exam_pin', 'instructions', 'max_attempts', 'allow_late_entry',
     ];
 
     protected function casts(): array
